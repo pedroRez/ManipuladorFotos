@@ -9,8 +9,12 @@
         Width="1400"
         MinHeight="720"
         MinWidth="1100"
+        WindowState="Maximized"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="CanResize"
         Background="#F5F7FA"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Icon="icon.ico">
     <Window.Resources>
         <SolidColorBrush x:Key="PrimaryBrush" Color="#1F6F8B" />
         <SolidColorBrush x:Key="AccentBrush" Color="#E07A5F" />
@@ -55,6 +59,7 @@
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -84,46 +89,49 @@
             </StackPanel>
         </Border>
 
-        <TabControl Grid.Row="1"
+        <Border Grid.Row="1"
+                Background="{StaticResource CardBrush}"
+                CornerRadius="12"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                Padding="10"
+                Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBox Grid.Column="0"
+                         Text="{Binding CurrentFolder, UpdateSourceTrigger=PropertyChanged}"
+                         VerticalContentAlignment="Center" />
+                <Button Grid.Column="1"
+                        Content="Escolher Pasta"
+                        Command="{Binding BrowseFolderCommand}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox Content="Incluir subpastas"
+                              IsChecked="{Binding IncludeSubfolders}" />
+                    <CheckBox Content="Dry Run"
+                              IsChecked="{Binding IsDryRun}"
+                              ToolTip="Quando ativo, apenas simula operações sem alterar arquivos." />
+                    <Button Content="Escanear"
+                            Command="{Binding ScanFilesCommand}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="2"
                     Background="Transparent"
                     BorderThickness="0">
             <TabItem Header="Organizar Fotos">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <Border Background="{StaticResource CardBrush}"
-                            CornerRadius="12"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            Padding="10"
-                            Margin="0,0,0,10">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <TextBox Grid.Column="0"
-                                     Text="{Binding CurrentFolder, UpdateSourceTrigger=PropertyChanged}"
-                                     VerticalContentAlignment="Center" />
-                            <Button Grid.Column="1"
-                                    Content="Escolher Pasta"
-                                    Command="{Binding BrowseFolderCommand}" />
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                <CheckBox Content="Incluir subpastas"
-                                          IsChecked="{Binding IncludeSubfolders}" />
-                                <Button Content="Escanear"
-                                        Command="{Binding ScanFilesCommand}" />
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-
-                    <Border Grid.Row="1"
+                    <Border Grid.Row="0"
                             Background="{StaticResource CardBrush}"
                             CornerRadius="12"
                             BorderBrush="{StaticResource BorderBrush}"
@@ -149,22 +157,22 @@
                             </StackPanel>
 
                             <StackPanel>
-                                <TextBlock Text="Criação de" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
+                                <TextBlock Text="Data original de" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
                                 <DatePicker SelectedDate="{Binding CreatedFrom}" Width="140" />
                             </StackPanel>
 
                             <StackPanel>
-                                <TextBlock Text="Criação até" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
+                                <TextBlock Text="Data original até" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
                                 <DatePicker SelectedDate="{Binding CreatedTo}" Width="140" />
                             </StackPanel>
 
                             <StackPanel>
-                                <TextBlock Text="Modificação de" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
+                                <TextBlock Text="Data original (extra) de" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
                                 <DatePicker SelectedDate="{Binding ModifiedFrom}" Width="140" />
                             </StackPanel>
 
                             <StackPanel>
-                                <TextBlock Text="Modificação até" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
+                                <TextBlock Text="Data original (extra) até" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
                                 <DatePicker SelectedDate="{Binding ModifiedTo}" Width="140" />
                             </StackPanel>
 
@@ -185,10 +193,34 @@
                                         Background="{StaticResource AccentBrush}"
                                         Command="{Binding ClearFiltersCommand}" />
                             </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="16,16,0,0">
+                                <TextBox Width="180"
+                                         Text="{Binding NewMoveFolderPath, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Nome da nova pasta (ou caminho completo) para mover as fotos marcadas." />
+                                <Button Content="Mover Selecionadas"
+                                        Command="{Binding MoveMarkedPhotosCommand}" />
+                                <Button Content="Separar Fotos/Vídeos"
+                                        Command="{Binding SeparateMediaCommand}" />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="16,16,0,0">
+                                <ComboBox Width="130"
+                                          ItemsSource="{Binding DateOrganizationModes}"
+                                          SelectedItem="{Binding DateOrganizationMode}" />
+                                <CheckBox Content="Consolidar subpastas"
+                                          IsChecked="{Binding FlattenSubfoldersByDate}"
+                                          ToolTip="Quando ativo, move todas as fotos para uma base única e organiza por data." />
+                                <TextBox Width="170"
+                                         Text="{Binding DateOrganizationBaseFolder, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Pasta base usada quando consolidar subpastas estiver ativo." />
+                                <Button Content="Organizar por Data"
+                                        Command="{Binding OrganizePhotosByDateCommand}" />
+                            </StackPanel>
                         </WrapPanel>
                     </Border>
 
-                    <Grid Grid.Row="2">
+                    <Grid Grid.Row="1">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="12" />
@@ -203,17 +235,18 @@
                                 Padding="8">
                             <DataGrid ItemsSource="{Binding DisplayedItems}"
                                       SelectedItem="{Binding SelectedItem}"
-                                      IsReadOnly="True"
+                                      IsReadOnly="False"
                                       AutoGenerateColumns="False"
                                       SelectionMode="Single"
                                       SelectionUnit="FullRow"
                                       GridLinesVisibility="Horizontal"
                                       RowHeaderWidth="0">
                                 <DataGrid.Columns>
+                                    <DataGridCheckBoxColumn Header="Marcar" Binding="{Binding IsMarked}" Width="0.7*" />
                                     <DataGridTextColumn Header="Nome" Binding="{Binding Name}" Width="2*" />
                                     <DataGridTextColumn Header="Extensão" Binding="{Binding Extension}" Width="0.8*" />
                                     <DataGridTextColumn Header="Tipo" Binding="{Binding Kind}" Width="0.8*" />
-                                    <DataGridTextColumn Header="Criação" Binding="{Binding CreationTime, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
+                                    <DataGridTextColumn Header="Data Original" Binding="{Binding PrimaryPhotoDate, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
                                     <DataGridTextColumn Header="Modificação" Binding="{Binding LastWriteTime, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
                                     <DataGridTextColumn Header="Tamanho" Binding="{Binding SizeLabel}" Width="0.9*" />
                                 </DataGrid.Columns>
@@ -282,6 +315,10 @@
                             <Button Content="Buscar Arquivos Indesejados"
                                     Command="{Binding ScanUnwantedCommand}"
                                     Margin="14,20,4,4" />
+                            <Button Content="Excluir Marcados"
+                                    Command="{Binding DeleteMarkedUnwantedCommand}"
+                                    Background="#B42318"
+                                    Margin="4,20,4,4" />
                         </WrapPanel>
                     </Border>
 
@@ -356,9 +393,19 @@
                                           SelectedItem="{Binding KeepPreference}" />
                             </StackPanel>
 
+                            <StackPanel>
+                                <TextBlock Text="Modo de limpeza" FontSize="12" Margin="4,0,4,2" />
+                                <ComboBox Width="130"
+                                          ItemsSource="{Binding CleanupModes}"
+                                          SelectedItem="{Binding CleanupMode}" />
+                            </StackPanel>
+
                             <Button Content="Gerar Lista de Exclusão"
                                     Command="{Binding GenerateDeletionListCommand}"
                                     Margin="14,20,4,4" />
+                            <Button Content="Aplicar Modo"
+                                    Command="{Binding ApplyCleanupModeCommand}"
+                                    Margin="4,20,4,4" />
                             <Button Content="Marcar Todos"
                                     Command="{Binding MarkAllDeletionCandidatesCommand}"
                                     Margin="4,20,4,4" />
@@ -366,9 +413,15 @@
                                     Command="{Binding UnmarkAllDeletionCandidatesCommand}"
                                     Background="{StaticResource AccentBrush}"
                                     Margin="4,20,4,4" />
+                            <Button Content="Seleção Automática"
+                                    Command="{Binding AutoSelectByGroupCommand}"
+                                    Margin="4,20,4,4" />
                             <Button Content="Excluir Marcados (Lixeira)"
                                     Command="{Binding DeleteMarkedCandidatesCommand}"
                                     Background="#B42318"
+                                    Margin="4,20,4,4" />
+                            <Button Content="Exportar CSV"
+                                    Command="{Binding ExportDeletionListCommand}"
                                     Margin="4,20,4,4" />
                             <TextBlock Text="{Binding MarkedDeletionCount, StringFormat=Marcados: {0}}"
                                        Margin="14,24,4,4"
@@ -386,20 +439,14 @@
                             CornerRadius="10"
                             BorderBrush="#C9DEEE"
                             BorderThickness="1"
-                            Padding="10"
+                            Padding="8,6"
                             Margin="0,0,0,10">
-                        <StackPanel>
+                        <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Como funciona a similaridade"
                                        FontWeight="SemiBold"
-                                       Foreground="#1F4F72" />
-                            <TextBlock Text="• Janela (segundos): limita a comparação a fotos tiradas em sequência."
-                                       Margin="0,4,0,0"
-                                       Foreground="#2E3A46" />
-                            <TextBlock Text="• Distância similaridade: menor = mais rígido, maior = mais permissivo."
-                                       Margin="0,2,0,0"
-                                       Foreground="#2E3A46" />
-                            <TextBlock Text="Sugestão: comece com 10 segundos e distância 8, revise os grupos e ajuste."
-                                       Margin="0,2,0,0"
+                                       Foreground="#1F4F72"
+                                       Margin="0,0,12,0" />
+                            <TextBlock Text="Janela: limita sequência | Distância: menor = rígido, maior = permissivo | Sugestão inicial: 10s / 8"
                                        Foreground="#2E3A46" />
                         </StackPanel>
                     </Border>
@@ -483,7 +530,7 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 CornerRadius="10"
                 Padding="10"
                 Margin="0,12,0,0"

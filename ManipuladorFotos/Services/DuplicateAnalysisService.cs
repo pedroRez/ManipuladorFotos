@@ -69,7 +69,7 @@ public sealed class DuplicateAnalysisService
             .Select(ToDeletionCandidate)
             .OrderBy(x => x.GroupLabel)
             .ThenBy(x => x.CanDelete) // original protegida primeiro no grupo
-            .ThenByDescending(x => x.CreationTime)
+            .ThenByDescending(x => x.Item.PrimaryPhotoDate)
             .ThenBy(x => x.Name)
             .ToList();
     }
@@ -196,54 +196,110 @@ public sealed class DuplicateAnalysisService
     {
         var photos = items
             .Where(x => x.IsImage && File.Exists(x.FullPath))
-            .OrderBy(x => x.CreationTime)
+            .OrderBy(x => x.PrimaryPhotoDate)
             .ToList();
+        if (photos.Count < 2)
+        {
+            return;
+        }
+
+        var adjacency = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in photos)
+        {
+            adjacency[p.FullPath] = [];
+        }
 
         for (var i = 0; i < photos.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var left = photos[i];
+            var leftHash = GetPerceptualHash(left);
+            if (leftHash == 0)
+            {
+                continue;
+            }
+
             for (var j = i + 1; j < photos.Count; j++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var right = photos[j];
-                var delta = (right.CreationTime - left.CreationTime).TotalSeconds;
+                var delta = (right.PrimaryPhotoDate - left.PrimaryPhotoDate).TotalSeconds;
                 if (delta > options.SimilarSecondsWindow)
                 {
                     break;
                 }
 
-                var leftHash = GetPerceptualHash(left);
                 var rightHash = GetPerceptualHash(right);
-                if (leftHash == 0 || rightHash == 0)
+                if (rightHash == 0)
                 {
                     continue;
                 }
 
                 var distance = HammingDistance(leftHash, rightHash);
-                if (distance > options.SimilarDistanceThreshold)
+                if (distance <= options.SimilarDistanceThreshold)
                 {
-                    continue;
+                    adjacency[left.FullPath].Add(right.FullPath);
+                    adjacency[right.FullPath].Add(left.FullPath);
                 }
+            }
+        }
 
-                var keeper = ScoreForKeep(left, options) >= ScoreForKeep(right, options) ? left : right;
-                var duplicate = keeper == left ? right : left;
-                var groupLabel = $"Seq:{keeper.CreationTime:yyyyMMdd-HHmmss}";
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var photoByPath = photos.ToDictionary(x => x.FullPath, StringComparer.OrdinalIgnoreCase);
+        var groupIndex = 1;
 
-                AddKeeper(
-                    candidates,
-                    keeper,
-                    groupLabel,
-                    "Semelhante",
-                    "Foto base protegida para manter pelo menos uma imagem da sequência.");
+        foreach (var photo in photos)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (visited.Contains(photo.FullPath))
+            {
+                continue;
+            }
 
+            var componentPaths = new List<string>();
+            var queue = new Queue<string>();
+            queue.Enqueue(photo.FullPath);
+            visited.Add(photo.FullPath);
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                componentPaths.Add(current);
+                foreach (var neighbor in adjacency[current])
+                {
+                    if (visited.Add(neighbor))
+                    {
+                        queue.Enqueue(neighbor);
+                    }
+                }
+            }
+
+            if (componentPaths.Count <= 1)
+            {
+                continue;
+            }
+
+            var componentItems = componentPaths.Select(path => photoByPath[path]).ToList();
+            var keeper = componentItems.OrderByDescending(x => ScoreForKeep(x, options)).First();
+            var groupLabel = $"Semelhante:{groupIndex:D4}";
+            groupIndex++;
+
+            AddKeeper(
+                candidates,
+                keeper,
+                groupLabel,
+                "Semelhante",
+                $"Foto base protegida do conjunto de similaridade ({componentItems.Count} itens).");
+
+            foreach (var duplicate in componentItems.Where(x => !x.FullPath.Equals(keeper.FullPath, StringComparison.OrdinalIgnoreCase)))
+            {
                 AddDuplicate(
                     candidates,
                     duplicate,
                     keeper.FullPath,
                     groupLabel,
                     "Semelhante",
-                    $"Foto semelhante na sequência ({delta:F0}s de diferença, distância {distance}).");
+                    "Foto semelhante no mesmo conjunto de sequência.");
             }
         }
     }
@@ -254,7 +310,7 @@ public sealed class DuplicateAnalysisService
         {
             "Maior tamanho" => item.SizeBytes,
             "Mais recente" => item.LastWriteTime.Ticks,
-            "Mais antiga" => -item.CreationTime.Ticks,
+            "Mais antiga" => -item.PrimaryPhotoDate.Ticks,
             _ => item.ResolutionPixels * 1_000_000d + item.SizeBytes
         };
     }

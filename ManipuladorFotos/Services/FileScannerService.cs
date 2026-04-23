@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.Globalization;
+using System.IO;
 using System.Windows.Media.Imaging;
 using ManipuladorFotos.Models;
 
@@ -50,7 +51,9 @@ public sealed class FileScannerService
                 var info = new FileInfo(path);
                 var ext = info.Extension;
                 var kind = ResolveKind(ext);
-                var (width, height) = kind == MediaKind.Foto ? TryReadImageDimensions(info.FullName) : ((int?)null, (int?)null);
+                var (width, height, originalTakenTime) = kind == MediaKind.Foto
+                    ? TryReadImageMetadata(info.FullName)
+                    : ((int?)null, (int?)null, (DateTime?)null);
 
                 result.Add(new MediaItem
                 {
@@ -60,6 +63,7 @@ public sealed class FileScannerService
                     SizeBytes = info.Length,
                     CreationTime = info.CreationTime,
                     LastWriteTime = info.LastWriteTime,
+                    OriginalTakenTime = originalTakenTime,
                     Kind = kind,
                     Width = width,
                     Height = height
@@ -129,7 +133,7 @@ public sealed class FileScannerService
         return MediaKind.Outro;
     }
 
-    private static (int? Width, int? Height) TryReadImageDimensions(string path)
+    private static (int? Width, int? Height, DateTime? OriginalTakenTime) TryReadImageMetadata(string path)
     {
         try
         {
@@ -138,14 +142,47 @@ public sealed class FileScannerService
             var frame = decoder.Frames.FirstOrDefault();
             if (frame is null)
             {
-                return (null, null);
+                return (null, null, null);
             }
 
-            return (frame.PixelWidth, frame.PixelHeight);
+            var originalTaken = TryReadOriginalTakenTime(frame.Metadata as BitmapMetadata);
+            return (frame.PixelWidth, frame.PixelHeight, originalTaken);
         }
         catch
         {
-            return (null, null);
+            return (null, null, null);
         }
+    }
+
+    private static DateTime? TryReadOriginalTakenTime(BitmapMetadata? metadata)
+    {
+        if (metadata is null)
+        {
+            return null;
+        }
+
+        var raw = metadata.DateTaken;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        raw = raw.Trim();
+        if (DateTime.TryParseExact(
+                raw,
+                "yyyy:MM:dd HH:mm:ss",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeLocal,
+                out var exifDate))
+        {
+            return exifDate;
+        }
+
+        if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
     }
 }

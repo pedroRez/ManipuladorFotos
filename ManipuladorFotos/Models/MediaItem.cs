@@ -13,6 +13,7 @@ public sealed class MediaItem : ObservableObject
     public required long SizeBytes { get; init; }
     public required DateTime CreationTime { get; init; }
     public required DateTime LastWriteTime { get; init; }
+    public DateTime? OriginalTakenTime { get; init; }
     public required MediaKind Kind { get; init; }
     public int? Width { get; init; }
     public int? Height { get; init; }
@@ -28,6 +29,7 @@ public sealed class MediaItem : ObservableObject
     };
 
     public bool IsImage => Kind == MediaKind.Foto;
+    public DateTime PrimaryPhotoDate => OriginalTakenTime ?? CreationTime;
     public long ResolutionPixels => (long)(Width ?? 0) * (Height ?? 0);
     public string ResolutionLabel => Width.HasValue && Height.HasValue ? $"{Width}x{Height}" : "-";
 

@@ -25,24 +25,24 @@ public sealed class FilterService
 
         if (criteria.CreatedFrom.HasValue)
         {
-            query = query.Where(x => x.CreationTime >= criteria.CreatedFrom.Value.Date);
+            query = query.Where(x => x.PrimaryPhotoDate >= criteria.CreatedFrom.Value.Date);
         }
 
         if (criteria.CreatedTo.HasValue)
         {
             var date = criteria.CreatedTo.Value.Date.AddDays(1).AddTicks(-1);
-            query = query.Where(x => x.CreationTime <= date);
+            query = query.Where(x => x.PrimaryPhotoDate <= date);
         }
 
         if (criteria.ModifiedFrom.HasValue)
         {
-            query = query.Where(x => x.LastWriteTime >= criteria.ModifiedFrom.Value.Date);
+            query = query.Where(x => x.PrimaryPhotoDate >= criteria.ModifiedFrom.Value.Date);
         }
 
         if (criteria.ModifiedTo.HasValue)
         {
             var date = criteria.ModifiedTo.Value.Date.AddDays(1).AddTicks(-1);
-            query = query.Where(x => x.LastWriteTime <= date);
+            query = query.Where(x => x.PrimaryPhotoDate <= date);
         }
 
         if (criteria.MinSizeBytes.HasValue)

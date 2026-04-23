@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
 using System.Windows.Media.Imaging;
 using ManipuladorFotos.Infrastructure;
 using ManipuladorFotos.Models;
@@ -21,6 +22,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _deleteMarkedCandidatesCommand;
     private readonly RelayCommand _cancelCurrentOperationCommand;
     private readonly RelayCommand _moveMarkedPhotosCommand;
+    private readonly RelayCommand _separateMediaCommand;
+    private readonly RelayCommand _organizePhotosByDateCommand;
+    private readonly RelayCommand _deleteMarkedUnwantedCommand;
+    private readonly RelayCommand _exportDeletionListCommand;
+    private readonly RelayCommand _applyCleanupModeCommand;
+    private readonly RelayCommand _autoSelectByGroupCommand;
 
     private List<MediaItem> _allItems = [];
     private bool _isBusy;
@@ -42,8 +49,8 @@ public sealed class MainViewModel : ObservableObject
     private string _statusMessage = "Selecione uma pasta e clique em Escanear.";
     private string _unwantedExtensions = ".tmp,.db,.ini,.log";
     private bool _useSameNameRule = true;
-    private bool _useSameSizeRule;
-    private bool _useSimilarInSequenceRule = true;
+    private bool _useSameSizeRule = true;
+    private bool _useSimilarInSequenceRule;
     private string _similarSecondsWindow = "10";
     private string _similarDistanceThreshold = "8";
     private string _keepPreference = "Maior resolução";
@@ -54,6 +61,11 @@ public sealed class MainViewModel : ObservableObject
     private bool _isProgressIndeterminate;
     private string _operationProgressLabel = string.Empty;
     private string _newMoveFolderPath = "Selecionadas";
+    private bool _isDryRun = true;
+    private string _cleanupMode = "Balanceado";
+    private string _dateOrganizationMode = "Ano/Mês";
+    private bool _flattenSubfoldersByDate;
+    private string _dateOrganizationBaseFolder = "OrganizadoPorData";
 
     public MainViewModel()
     {
@@ -62,6 +74,8 @@ public sealed class MainViewModel : ObservableObject
         DeletionCandidates = [];
         TypeOptions = ["Todos", "Foto", "Video", "Outro"];
         KeepPreferenceOptions = ["Maior resolução", "Maior tamanho", "Mais recente", "Mais antiga"];
+        DateOrganizationModes = ["Ano", "Ano/Mês", "Ano/Mês/Dia"];
+        CleanupModes = ["Conservador", "Balanceado", "Agressivo"];
 
         BrowseFolderCommand = new RelayCommand(BrowseFolder);
         _scanFilesCommand = new RelayCommand(() => _ = ScanFilesAsync(), () => !IsBusy);
@@ -69,7 +83,13 @@ public sealed class MainViewModel : ObservableObject
         _generateDeletionListCommand = new RelayCommand(() => _ = GenerateDeletionListAsync(), () => !IsBusy && _allItems.Count > 0);
         _deleteMarkedCandidatesCommand = new RelayCommand(() => _ = DeleteMarkedCandidatesAsync(), () => !IsBusy && DeletionCandidates.Any(x => x.IsMarked && x.CanDelete));
         _cancelCurrentOperationCommand = new RelayCommand(CancelCurrentOperation, () => IsBusy);
-        _moveMarkedPhotosCommand = new RelayCommand(() => _ = MoveMarkedPhotosAsync(), () => !IsBusy && DisplayedItems.Any(x => x.IsMarked && x.IsImage));
+        _moveMarkedPhotosCommand = new RelayCommand(() => _ = MoveMarkedPhotosAsync(), () => !IsBusy);
+        _separateMediaCommand = new RelayCommand(() => _ = SeparateMediaAsync(), () => !IsBusy);
+        _organizePhotosByDateCommand = new RelayCommand(() => _ = OrganizePhotosByDateAsync(), () => !IsBusy);
+        _deleteMarkedUnwantedCommand = new RelayCommand(() => _ = DeleteMarkedUnwantedAsync(), () => !IsBusy);
+        _exportDeletionListCommand = new RelayCommand(ExportDeletionListCsv, () => DeletionCandidates.Count > 0);
+        _applyCleanupModeCommand = new RelayCommand(ApplyCleanupMode);
+        _autoSelectByGroupCommand = new RelayCommand(AutoSelectByGroup, () => DeletionCandidates.Any(x => x.CanDelete));
 
         ScanFilesCommand = _scanFilesCommand;
         ApplyFiltersCommand = new RelayCommand(ApplyFilters);
@@ -81,6 +101,12 @@ public sealed class MainViewModel : ObservableObject
         DeleteMarkedCandidatesCommand = _deleteMarkedCandidatesCommand;
         CancelCurrentOperationCommand = _cancelCurrentOperationCommand;
         MoveMarkedPhotosCommand = _moveMarkedPhotosCommand;
+        SeparateMediaCommand = _separateMediaCommand;
+        OrganizePhotosByDateCommand = _organizePhotosByDateCommand;
+        DeleteMarkedUnwantedCommand = _deleteMarkedUnwantedCommand;
+        ExportDeletionListCommand = _exportDeletionListCommand;
+        ApplyCleanupModeCommand = _applyCleanupModeCommand;
+        AutoSelectByGroupCommand = _autoSelectByGroupCommand;
 
         _ = ScanFilesAsync();
     }
@@ -90,6 +116,8 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<DeletionCandidate> DeletionCandidates { get; }
     public IReadOnlyList<string> TypeOptions { get; }
     public IReadOnlyList<string> KeepPreferenceOptions { get; }
+    public IReadOnlyList<string> DateOrganizationModes { get; }
+    public IReadOnlyList<string> CleanupModes { get; }
 
     public RelayCommand BrowseFolderCommand { get; }
     public RelayCommand ScanFilesCommand { get; }
@@ -102,6 +130,12 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand DeleteMarkedCandidatesCommand { get; }
     public RelayCommand CancelCurrentOperationCommand { get; }
     public RelayCommand MoveMarkedPhotosCommand { get; }
+    public RelayCommand SeparateMediaCommand { get; }
+    public RelayCommand OrganizePhotosByDateCommand { get; }
+    public RelayCommand DeleteMarkedUnwantedCommand { get; }
+    public RelayCommand ExportDeletionListCommand { get; }
+    public RelayCommand ApplyCleanupModeCommand { get; }
+    public RelayCommand AutoSelectByGroupCommand { get; }
 
     public bool IsBusy
     {
@@ -297,6 +331,36 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _newMoveFolderPath, value);
     }
 
+    public bool IsDryRun
+    {
+        get => _isDryRun;
+        set => SetProperty(ref _isDryRun, value);
+    }
+
+    public string DateOrganizationMode
+    {
+        get => _dateOrganizationMode;
+        set => SetProperty(ref _dateOrganizationMode, value);
+    }
+
+    public bool FlattenSubfoldersByDate
+    {
+        get => _flattenSubfoldersByDate;
+        set => SetProperty(ref _flattenSubfoldersByDate, value);
+    }
+
+    public string DateOrganizationBaseFolder
+    {
+        get => _dateOrganizationBaseFolder;
+        set => SetProperty(ref _dateOrganizationBaseFolder, value);
+    }
+
+    public string CleanupMode
+    {
+        get => _cleanupMode;
+        set => SetProperty(ref _cleanupMode, value);
+    }
+
     private void BrowseFolder()
     {
         using var dialog = new WinForms.FolderBrowserDialog
@@ -470,8 +534,9 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var bytes = marked.Sum(x => x.Item.SizeBytes);
+        var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
         var confirm = System.Windows.MessageBox.Show(
-            $"Você está prestes a enviar {marked.Count} arquivos para a lixeira.\nEspaço estimado: {FormatBytes(bytes)}.\n\nDeseja continuar?",
+            $"{modeLabel} Processar {marked.Count} arquivos da lista de exclusão?\nEspaço estimado: {FormatBytes(bytes)}.",
             "Confirmar exclusão",
             System.Windows.MessageBoxButton.YesNo,
             System.Windows.MessageBoxImage.Warning);
@@ -486,6 +551,7 @@ public sealed class MainViewModel : ObservableObject
 
         var deleted = 0;
         var failed = 0;
+        var logLines = new List<string>();
 
         try
         {
@@ -501,13 +567,17 @@ public sealed class MainViewModel : ObservableObject
                     {
                         if (File.Exists(candidate.FullPath))
                         {
-                            FileSystem.DeleteFile(
-                                candidate.FullPath,
-                                UIOption.OnlyErrorDialogs,
-                                RecycleOption.SendToRecycleBin,
-                                UICancelOption.DoNothing);
+                            if (!IsDryRun)
+                            {
+                                FileSystem.DeleteFile(
+                                    candidate.FullPath,
+                                    UIOption.OnlyErrorDialogs,
+                                    RecycleOption.SendToRecycleBin,
+                                    UICancelOption.DoNothing);
+                            }
 
                             deleted++;
+                            logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_DELETE_CANDIDATE" : "DELETE_CANDIDATE")} | {candidate.FullPath}");
                         }
                     }
                     catch
@@ -524,24 +594,28 @@ public sealed class MainViewModel : ObservableObject
             }, cts.Token);
 
             var deletedPaths = marked.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
-
-            RemoveByPath(DisplayedItems, deletedPaths);
-            RemoveByPath(UnwantedItems, deletedPaths);
-            RemoveCandidatesByPath(deletedPaths);
-
-            if (SelectedItem is not null && deletedPaths.Contains(SelectedItem.FullPath))
+            if (!IsDryRun)
             {
-                SelectedItem = null;
-            }
+                _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
 
-            if (SelectedDeletionCandidate is not null && deletedPaths.Contains(SelectedDeletionCandidate.FullPath))
-            {
-                SelectedDeletionCandidate = null;
+                RemoveByPath(DisplayedItems, deletedPaths);
+                RemoveByPath(UnwantedItems, deletedPaths);
+                RemoveCandidatesByPath(deletedPaths);
+
+                if (SelectedItem is not null && deletedPaths.Contains(SelectedItem.FullPath))
+                {
+                    SelectedItem = null;
+                }
+
+                if (SelectedDeletionCandidate is not null && deletedPaths.Contains(SelectedDeletionCandidate.FullPath))
+                {
+                    SelectedDeletionCandidate = null;
+                }
             }
 
             UpdateMarkedDeletionSummary();
-            StatusMessage = $"Exclusão concluída. Enviados para lixeira: {deleted}. Falhas: {failed}.";
+            WriteOperationLog(logLines);
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")}. Processados: {deleted}. Falhas: {failed}.";
         }
         catch (OperationCanceledException)
         {
@@ -572,8 +646,9 @@ public sealed class MainViewModel : ObservableObject
             ? NewMoveFolderPath
             : Path.Combine(CurrentFolder, NewMoveFolderPath);
 
+        var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
         var confirm = System.Windows.MessageBox.Show(
-            $"Mover {markedPhotos.Count} fotos para:\n{destinationFolder}\n\nDeseja continuar?",
+            $"{modeLabel} Mover {markedPhotos.Count} fotos para:\n{destinationFolder}\n\nDeseja continuar?",
             "Confirmar movimentação",
             System.Windows.MessageBoxButton.YesNo,
             System.Windows.MessageBoxImage.Question);
@@ -587,12 +662,16 @@ public sealed class MainViewModel : ObservableObject
         var cts = BeginOperation("Movendo fotos selecionadas...", false);
         var moved = 0;
         var failed = 0;
+        var logLines = new List<string>();
 
         try
         {
             await Task.Run(() =>
             {
-                Directory.CreateDirectory(destinationFolder);
+                if (!IsDryRun)
+                {
+                    Directory.CreateDirectory(destinationFolder);
+                }
                 var total = markedPhotos.Count;
                 var processed = 0;
 
@@ -609,8 +688,13 @@ public sealed class MainViewModel : ObservableObject
 
                         var fileName = Path.GetFileName(photo.FullPath);
                         var targetPath = GetUniqueDestinationPath(destinationFolder, fileName);
-                        File.Move(photo.FullPath, targetPath);
+                        if (!IsDryRun)
+                        {
+                            File.Move(photo.FullPath, targetPath);
+                        }
+
                         moved++;
+                        logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_MOVE_PHOTO" : "MOVE_PHOTO")} | {photo.FullPath} => {targetPath}");
                     }
                     catch
                     {
@@ -625,13 +709,18 @@ public sealed class MainViewModel : ObservableObject
                 }
             }, cts.Token);
 
-            var movedPaths = markedPhotos.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            _allItems = _allItems.Where(x => !movedPaths.Contains(x.FullPath)).ToList();
-            RemoveByPath(DisplayedItems, movedPaths);
-            RemoveByPath(UnwantedItems, movedPaths);
-            RemoveCandidatesByPath(movedPaths);
-            SelectedItem = null;
-            StatusMessage = $"Movimentação concluída. Movidas: {moved}. Falhas: {failed}.";
+            if (!IsDryRun)
+            {
+                var movedPaths = markedPhotos.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                _allItems = _allItems.Where(x => !movedPaths.Contains(x.FullPath)).ToList();
+                RemoveByPath(DisplayedItems, movedPaths);
+                RemoveByPath(UnwantedItems, movedPaths);
+                RemoveCandidatesByPath(movedPaths);
+                SelectedItem = null;
+            }
+
+            WriteOperationLog(logLines);
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Movimentação concluída")}. Movidas: {moved}. Falhas: {failed}.";
         }
         catch (OperationCanceledException)
         {
@@ -643,6 +732,332 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private async Task DeleteMarkedUnwantedAsync()
+    {
+        var marked = UnwantedItems.Where(x => x.IsMarked).ToList();
+        if (marked.Count == 0)
+        {
+            StatusMessage = "Nenhum arquivo indesejado marcado para exclusão.";
+            return;
+        }
+
+        var bytes = marked.Sum(x => x.SizeBytes);
+        var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
+        var confirm = System.Windows.MessageBox.Show(
+            $"{modeLabel} Processar {marked.Count} arquivos indesejados?\nEspaço estimado: {FormatBytes(bytes)}.",
+            "Excluir indesejados",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            StatusMessage = "Exclusão de indesejados cancelada.";
+            return;
+        }
+
+        var cts = BeginOperation("Processando arquivos indesejados...", false);
+        var deleted = 0;
+        var failed = 0;
+        var total = marked.Count;
+        var logLines = new List<string>();
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                var processed = 0;
+                foreach (var item in marked)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (File.Exists(item.FullPath))
+                        {
+                            if (!IsDryRun)
+                            {
+                                FileSystem.DeleteFile(
+                                    item.FullPath,
+                                    UIOption.OnlyErrorDialogs,
+                                    RecycleOption.SendToRecycleBin,
+                                    UICancelOption.DoNothing);
+                            }
+
+                            deleted++;
+                            logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_DELETE_UNWANTED" : "DELETE_UNWANTED")} | {item.FullPath}");
+                        }
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+                    finally
+                    {
+                        processed++;
+                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
+                        UpdateProgress(percent, false, $"Indesejados: {processed}/{total}");
+                    }
+                }
+            }, cts.Token);
+
+            if (!IsDryRun)
+            {
+                var deletedPaths = marked.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
+                RemoveByPath(DisplayedItems, deletedPaths);
+                RemoveByPath(UnwantedItems, deletedPaths);
+                RemoveCandidatesByPath(deletedPaths);
+            }
+
+            WriteOperationLog(logLines);
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")} em indesejados. Processados: {deleted}. Falhas: {failed}.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Operação de indesejados cancelada.";
+        }
+        finally
+        {
+            EndOperation(cts);
+        }
+    }
+
+    private async Task SeparateMediaAsync()
+    {
+        var photos = _allItems.Where(x => x.Kind == MediaKind.Foto && File.Exists(x.FullPath)).ToList();
+        var videos = _allItems.Where(x => x.Kind == MediaKind.Video && File.Exists(x.FullPath)).ToList();
+        var all = photos.Concat(videos).ToList();
+
+        if (all.Count == 0)
+        {
+            StatusMessage = "Nenhuma foto ou vídeo disponível para separar.";
+            return;
+        }
+
+        var photosFolder = Path.Combine(CurrentFolder, "Fotos");
+        var videosFolder = Path.Combine(CurrentFolder, "Videos");
+        var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
+        var confirm = System.Windows.MessageBox.Show(
+            $"{modeLabel} Separar {photos.Count} fotos e {videos.Count} vídeos nas pastas:\n{photosFolder}\n{videosFolder}\n\nDeseja continuar?",
+            "Separar fotos e vídeos",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            StatusMessage = "Separação cancelada pelo usuário.";
+            return;
+        }
+
+        var cts = BeginOperation("Separando fotos e vídeos...", false);
+        var moved = 0;
+        var failed = 0;
+        var logLines = new List<string>();
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                if (!IsDryRun)
+                {
+                    Directory.CreateDirectory(photosFolder);
+                    Directory.CreateDirectory(videosFolder);
+                }
+
+                var total = all.Count;
+                var processed = 0;
+
+                foreach (var item in all)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var destinationRoot = item.Kind == MediaKind.Foto ? photosFolder : videosFolder;
+                        var fileName = Path.GetFileName(item.FullPath);
+                        var targetPath = GetUniqueDestinationPath(destinationRoot, fileName);
+                        if (!IsDryRun)
+                        {
+                            File.Move(item.FullPath, targetPath);
+                        }
+
+                        moved++;
+                        logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_SEPARATE_MEDIA" : "SEPARATE_MEDIA")} | {item.FullPath} => {targetPath}");
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+                    finally
+                    {
+                        processed++;
+                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
+                        UpdateProgress(percent, false, $"Separação: {processed}/{total}");
+                    }
+                }
+            }, cts.Token);
+
+            if (!IsDryRun)
+            {
+                var movedPaths = all.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                _allItems = _allItems.Where(x => !movedPaths.Contains(x.FullPath)).ToList();
+                RemoveByPath(DisplayedItems, movedPaths);
+                RemoveByPath(UnwantedItems, movedPaths);
+                RemoveCandidatesByPath(movedPaths);
+                SelectedItem = null;
+            }
+
+            WriteOperationLog(logLines);
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Separação concluída")}. Processados: {moved}. Falhas: {failed}.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Separação cancelada.";
+        }
+        finally
+        {
+            EndOperation(cts);
+        }
+    }
+
+    private async Task OrganizePhotosByDateAsync()
+    {
+        var photos = _allItems.Where(x => x.Kind == MediaKind.Foto && File.Exists(x.FullPath)).ToList();
+        if (photos.Count == 0)
+        {
+            StatusMessage = "Nenhuma foto encontrada para organizar por data.";
+            return;
+        }
+
+        var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
+        var flattenLabel = FlattenSubfoldersByDate ? "Consolidando subpastas em base única" : "Mantendo organização por pasta de origem";
+        var confirm = System.Windows.MessageBox.Show(
+            $"{modeLabel} Organizar {photos.Count} fotos por {DateOrganizationMode}.\n{flattenLabel}.\n\nDeseja continuar?",
+            "Organizar fotos por data",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            StatusMessage = "Organização por data cancelada pelo usuário.";
+            return;
+        }
+
+        var cts = BeginOperation("Organizando fotos por data...", false);
+        var moved = 0;
+        var failed = 0;
+        var logLines = new List<string>();
+        var shouldRefreshAfter = false;
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                var total = photos.Count;
+                var processed = 0;
+
+                string? flattenRoot = null;
+                if (FlattenSubfoldersByDate)
+                {
+                    var baseName = string.IsNullOrWhiteSpace(DateOrganizationBaseFolder) ? "OrganizadoPorData" : DateOrganizationBaseFolder.Trim();
+                    flattenRoot = Path.Combine(CurrentFolder, baseName);
+                    if (!IsDryRun)
+                    {
+                        Directory.CreateDirectory(flattenRoot);
+                    }
+                }
+
+                foreach (var photo in photos)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var baseRoot = flattenRoot ?? photo.DirectoryPath;
+                        var datePart = BuildDatePath(photo.PrimaryPhotoDate, DateOrganizationMode);
+                        var destinationFolder = Path.Combine(baseRoot, datePart);
+                        var fileName = Path.GetFileName(photo.FullPath);
+                        var targetPath = GetUniqueDestinationPath(destinationFolder, fileName);
+
+                        var sourceFull = Path.GetFullPath(photo.FullPath);
+                        var targetFull = Path.GetFullPath(targetPath);
+                        if (sourceFull.Equals(targetFull, StringComparison.OrdinalIgnoreCase))
+                        {
+                            processed++;
+                            continue;
+                        }
+
+                        if (!IsDryRun)
+                        {
+                            Directory.CreateDirectory(destinationFolder);
+                            File.Move(photo.FullPath, targetPath);
+                        }
+
+                        moved++;
+                        logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_ORGANIZE_BY_DATE" : "ORGANIZE_BY_DATE")} | {photo.FullPath} => {targetPath}");
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+                    finally
+                    {
+                        processed++;
+                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
+                        UpdateProgress(percent, false, $"Organização por data: {processed}/{total}");
+                    }
+                }
+            }, cts.Token);
+
+            WriteOperationLog(logLines);
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Organização concluída")} por data. Processados: {moved}. Falhas: {failed}.";
+            shouldRefreshAfter = !IsDryRun;
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Organização por data cancelada.";
+        }
+        finally
+        {
+            EndOperation(cts);
+            if (shouldRefreshAfter)
+            {
+                _ = ScanFilesAsync();
+            }
+        }
+    }
+
+    private void ExportDeletionListCsv()
+    {
+        if (DeletionCandidates.Count == 0)
+        {
+            StatusMessage = "Não há itens na lista de exclusão para exportar.";
+            return;
+        }
+
+        var exportDir = Path.Combine(Environment.CurrentDirectory, "exports");
+        Directory.CreateDirectory(exportDir);
+        var filePath = Path.Combine(exportDir, $"deletion-list-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Marcado;PodeExcluir;Estado;Nome;Extensao;Tamanho;Grupo;Regra;Motivo;ArquivoManter;Caminho");
+        foreach (var c in DeletionCandidates)
+        {
+            sb.AppendLine(string.Join(";",
+                c.IsMarked ? "Sim" : "Nao",
+                c.CanDelete ? "Sim" : "Nao",
+                EscapeCsv(c.DeletionStateLabel),
+                EscapeCsv(c.Name),
+                EscapeCsv(c.Extension),
+                EscapeCsv(c.SizeLabel),
+                EscapeCsv(c.GroupLabel),
+                EscapeCsv(c.Rule),
+                EscapeCsv(c.Reason),
+                EscapeCsv(c.KeepFilePath),
+                EscapeCsv(c.FullPath)));
+        }
+
+        File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+        StatusMessage = $"Lista de exclusão exportada em: {filePath}";
+    }
+
     private void SetAllCandidatesMarked(bool marked)
     {
         foreach (var candidate in DeletionCandidates)
@@ -652,6 +1067,67 @@ public sealed class MainViewModel : ObservableObject
 
         UpdateMarkedDeletionSummary();
         RaiseCommandStates();
+    }
+
+    private void ApplyCleanupMode()
+    {
+        switch (CleanupMode)
+        {
+            case "Conservador":
+                UseSameNameRule = true;
+                UseSameSizeRule = false;
+                UseSimilarInSequenceRule = false;
+                SimilarSecondsWindow = "5";
+                SimilarDistanceThreshold = "5";
+                break;
+            case "Agressivo":
+                UseSameNameRule = true;
+                UseSameSizeRule = true;
+                UseSimilarInSequenceRule = true;
+                SimilarSecondsWindow = "30";
+                SimilarDistanceThreshold = "12";
+                break;
+            default:
+                UseSameNameRule = true;
+                UseSameSizeRule = true;
+                UseSimilarInSequenceRule = false;
+                SimilarSecondsWindow = "10";
+                SimilarDistanceThreshold = "8";
+                break;
+        }
+
+        StatusMessage = $"Modo de limpeza aplicado: {CleanupMode}.";
+    }
+
+    private void AutoSelectByGroup()
+    {
+        foreach (var candidate in DeletionCandidates)
+        {
+            candidate.IsMarked = false;
+        }
+
+        var groups = DeletionCandidates
+            .Where(x => !string.IsNullOrWhiteSpace(x.GroupLabel))
+            .SelectMany(x => SplitGroups(x.GroupLabel).Select(g => (Group: g, Item: x)))
+            .GroupBy(x => x.Group, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in groups)
+        {
+            var all = group.Select(x => x.Item).Distinct().ToList();
+            var keeper = all.FirstOrDefault(x => !x.CanDelete)
+                         ?? all.OrderByDescending(x => x.Item.ResolutionPixels)
+                               .ThenByDescending(x => x.Item.SizeBytes)
+                               .ThenByDescending(x => x.Item.PrimaryPhotoDate)
+                               .FirstOrDefault();
+
+            foreach (var item in all)
+            {
+                item.IsMarked = item.CanDelete && !ReferenceEquals(item, keeper);
+            }
+        }
+
+        UpdateMarkedDeletionSummary();
+        StatusMessage = "Seleção automática aplicada por conjunto: 1 mantida e restantes marcadas.";
     }
 
     private void CandidateOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -706,7 +1182,7 @@ public sealed class MainViewModel : ObservableObject
         };
 
         var filtered = _filterService.Apply(_allItems, criteria)
-            .OrderByDescending(x => x.CreationTime)
+            .OrderByDescending(x => x.PrimaryPhotoDate)
             .ToList();
 
         DisplayedItems.Clear();
@@ -838,6 +1314,11 @@ public sealed class MainViewModel : ObservableObject
         _generateDeletionListCommand.RaiseCanExecuteChanged();
         _deleteMarkedCandidatesCommand.RaiseCanExecuteChanged();
         _moveMarkedPhotosCommand.RaiseCanExecuteChanged();
+        _separateMediaCommand.RaiseCanExecuteChanged();
+        _organizePhotosByDateCommand.RaiseCanExecuteChanged();
+        _deleteMarkedUnwantedCommand.RaiseCanExecuteChanged();
+        _exportDeletionListCommand.RaiseCanExecuteChanged();
+        _autoSelectByGroupCommand.RaiseCanExecuteChanged();
         _cancelCurrentOperationCommand.RaiseCanExecuteChanged();
         MarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
         UnmarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
@@ -849,6 +1330,27 @@ public sealed class MainViewModel : ObservableObject
         MarkedDeletionCount = marked.Count;
         _markedDeletionBytes = marked.Sum(x => x.Item.SizeBytes);
         OnPropertyChanged(nameof(MarkedDeletionSizeLabel));
+    }
+
+    private static string EscapeCsv(string? value)
+    {
+        var raw = value ?? string.Empty;
+        var escaped = raw.Replace("\"", "\"\"");
+        return $"\"{escaped}\"";
+    }
+
+    private static void WriteOperationLog(IEnumerable<string> lines)
+    {
+        var list = lines.ToList();
+        if (list.Count == 0)
+        {
+            return;
+        }
+
+        var logDir = Path.Combine(Environment.CurrentDirectory, "logs");
+        Directory.CreateDirectory(logDir);
+        var logFile = Path.Combine(logDir, $"operations-{DateTime.Now:yyyy-MM-dd}.log");
+        File.AppendAllLines(logFile, list);
     }
 
     private static long? ParseKbToBytes(string value)
@@ -918,5 +1420,22 @@ public sealed class MainViewModel : ObservableObject
 
             index++;
         }
+    }
+
+    private static string BuildDatePath(DateTime date, string mode)
+    {
+        return mode switch
+        {
+            "Ano" => date.ToString("yyyy"),
+            "Ano/Mês/Dia" => Path.Combine(date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd")),
+            _ => Path.Combine(date.ToString("yyyy"), date.ToString("MM"))
+        };
+    }
+
+    private static IEnumerable<string> SplitGroups(string groupLabel)
+    {
+        return groupLabel
+            .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x));
     }
 }
