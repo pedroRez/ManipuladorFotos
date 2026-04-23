@@ -12,6 +12,7 @@ public sealed class DeletionCandidate : ObservableObject
     public required string KeepFilePath { get; init; }
     public required string GroupLabel { get; init; }
     public required bool CanDelete { get; init; }
+    public int? SimilarityPercent { get; init; }
 
     public string Name => Item.Name;
     public string Extension => Item.Extension;
@@ -20,6 +21,7 @@ public sealed class DeletionCandidate : ObservableObject
     public DateTime CreationTime => Item.CreationTime;
     public string Kind => Item.Kind.ToString();
     public string DeletionStateLabel => CanDelete ? "Candidato" : "Original protegida";
+    public string SimilarityLabel => SimilarityPercent.HasValue ? $"{SimilarityPercent.Value}%" : "-";
 
     public bool IsMarked
     {

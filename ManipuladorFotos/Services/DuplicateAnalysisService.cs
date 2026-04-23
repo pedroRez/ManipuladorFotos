@@ -204,6 +204,7 @@ public sealed class DuplicateAnalysisService
         }
 
         var adjacency = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var minDistanceByItem = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in photos)
         {
             adjacency[p.FullPath] = [];
@@ -240,6 +241,8 @@ public sealed class DuplicateAnalysisService
                 {
                     adjacency[left.FullPath].Add(right.FullPath);
                     adjacency[right.FullPath].Add(left.FullPath);
+                    RegisterMinDistance(minDistanceByItem, left.FullPath, distance);
+                    RegisterMinDistance(minDistanceByItem, right.FullPath, distance);
                 }
             }
         }
@@ -289,7 +292,8 @@ public sealed class DuplicateAnalysisService
                 keeper,
                 groupLabel,
                 "Semelhante",
-                $"Foto base protegida do conjunto de similaridade ({componentItems.Count} itens).");
+                $"Foto base protegida do conjunto de similaridade ({componentItems.Count} itens).",
+                GetMinDistance(minDistanceByItem, keeper.FullPath));
 
             foreach (var duplicate in componentItems.Where(x => !x.FullPath.Equals(keeper.FullPath, StringComparison.OrdinalIgnoreCase)))
             {
@@ -299,7 +303,8 @@ public sealed class DuplicateAnalysisService
                     keeper.FullPath,
                     groupLabel,
                     "Semelhante",
-                    "Foto semelhante no mesmo conjunto de sequência.");
+                    "Foto semelhante no mesmo conjunto de sequência.",
+                    GetMinDistance(minDistanceByItem, duplicate.FullPath));
             }
         }
     }
@@ -321,12 +326,14 @@ public sealed class DuplicateAnalysisService
         string keepFilePath,
         string groupLabel,
         string rule,
-        string reason)
+        string reason,
+        int? similarityDistance = null)
     {
         var acc = GetOrCreate(candidates, item, keepFilePath);
         acc.Rules.Add(rule);
         acc.Reasons.Add(reason);
         acc.GroupLabels.Add(groupLabel);
+        acc.UpdateSimilarityDistance(similarityDistance);
     }
 
     private static void AddKeeper(
@@ -334,7 +341,8 @@ public sealed class DuplicateAnalysisService
         MediaItem item,
         string groupLabel,
         string rule,
-        string reason)
+        string reason,
+        int? similarityDistance = null)
     {
         var acc = GetOrCreate(candidates, item, item.FullPath);
         acc.CanDelete = false;
@@ -342,6 +350,7 @@ public sealed class DuplicateAnalysisService
         acc.Reasons.Add(reason);
         acc.GroupLabels.Add(groupLabel);
         acc.KeepFilePath = item.FullPath;
+        acc.UpdateSimilarityDistance(similarityDistance);
     }
 
     private static CandidateAccumulator GetOrCreate(
@@ -367,7 +376,10 @@ public sealed class DuplicateAnalysisService
             Reason = string.Join("; ", x.Reasons.Distinct()),
             KeepFilePath = x.KeepFilePath,
             GroupLabel = string.Join(" | ", x.GroupLabels.OrderBy(g => g)),
-            CanDelete = x.CanDelete
+            CanDelete = x.CanDelete,
+            SimilarityPercent = x.BestSimilarityDistance.HasValue
+                ? Math.Clamp((int)Math.Round((1d - (x.BestSimilarityDistance.Value / 64d)) * 100d), 0, 100)
+                : null
         };
 
         candidate.IsMarked = candidate.CanDelete;
@@ -454,6 +466,25 @@ public sealed class DuplicateAnalysisService
         return count;
     }
 
+    private static void RegisterMinDistance(IDictionary<string, int> map, string path, int distance)
+    {
+        if (map.TryGetValue(path, out var current))
+        {
+            if (distance < current)
+            {
+                map[path] = distance;
+            }
+            return;
+        }
+
+        map[path] = distance;
+    }
+
+    private static int? GetMinDistance(IReadOnlyDictionary<string, int> map, string path)
+    {
+        return map.TryGetValue(path, out var value) ? value : null;
+    }
+
     private sealed class CandidateAccumulator
     {
         public CandidateAccumulator(MediaItem item, string keepFilePath)
@@ -469,8 +500,22 @@ public sealed class DuplicateAnalysisService
         public MediaItem Item { get; }
         public string KeepFilePath { get; set; }
         public bool CanDelete { get; set; }
+        public int? BestSimilarityDistance { get; private set; }
         public HashSet<string> Rules { get; }
         public List<string> Reasons { get; }
         public HashSet<string> GroupLabels { get; }
+
+        public void UpdateSimilarityDistance(int? distance)
+        {
+            if (!distance.HasValue)
+            {
+                return;
+            }
+
+            if (!BestSimilarityDistance.HasValue || distance.Value < BestSimilarityDistance.Value)
+            {
+                BestSimilarityDistance = distance.Value;
+            }
+        }
     }
 }

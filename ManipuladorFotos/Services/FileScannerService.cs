@@ -7,6 +7,8 @@ namespace ManipuladorFotos.Services;
 
 public sealed class FileScannerService
 {
+    private const string InternalFolderName = ".manipuladorfotos";
+
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".heic"
@@ -46,6 +48,11 @@ public sealed class FileScannerService
         foreach (var path in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (IsInternalAppPath(path))
+            {
+                continue;
+            }
+
             try
             {
                 var info = new FileInfo(path);
@@ -184,5 +191,13 @@ public sealed class FileScannerService
         }
 
         return null;
+    }
+
+    private static bool IsInternalAppPath(string fullPath)
+    {
+        var normalized = Path.GetFullPath(fullPath)
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        var marker = $"{Path.DirectorySeparatorChar}{InternalFolderName}{Path.DirectorySeparatorChar}";
+        return normalized.Contains(marker, StringComparison.OrdinalIgnoreCase);
     }
 }

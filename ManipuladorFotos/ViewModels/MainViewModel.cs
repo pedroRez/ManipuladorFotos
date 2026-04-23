@@ -26,9 +26,11 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _organizePhotosByDateCommand;
     private readonly RelayCommand _deleteMarkedUnwantedCommand;
     private readonly RelayCommand _exportDeletionListCommand;
+    private readonly RelayCommand _exportDeletionListTxtCommand;
     private readonly RelayCommand _applyCleanupModeCommand;
     private readonly RelayCommand _autoSelectByGroupCommand;
     private readonly RelayCommand _undoLastOperationCommand;
+    private readonly RelayCommand _undoSelectedOperationCommand;
 
     private List<MediaItem> _allItems = [];
     private bool _isBusy;
@@ -47,6 +49,7 @@ public sealed class MainViewModel : ObservableObject
     private DeletionCandidate? _selectedDeletionCandidate;
     private BitmapImage? _previewImage;
     private BitmapImage? _deletionPreviewImage;
+    private BitmapImage? _keepDeletionPreviewImage;
     private string _statusMessage = "Selecione uma pasta e clique em Escanear.";
     private string _unwantedExtensions = ".tmp,.db,.ini,.log";
     private bool _useSameNameRule = true;
@@ -62,12 +65,13 @@ public sealed class MainViewModel : ObservableObject
     private bool _isProgressIndeterminate;
     private string _operationProgressLabel = string.Empty;
     private string _newMoveFolderPath = "Selecionadas";
-    private bool _isDryRun = true;
     private string _cleanupMode = "Balanceado";
     private string _dateOrganizationMode = "Ano/Mês";
     private bool _flattenSubfoldersByDate;
     private string _dateOrganizationBaseFolder = "OrganizadoPorData";
+    private bool _compareModeEnabled;
     private List<UndoBatch> _undoBatches = [];
+    private string? _selectedUndoBatchId;
 
     public MainViewModel()
     {
@@ -90,9 +94,11 @@ public sealed class MainViewModel : ObservableObject
         _organizePhotosByDateCommand = new RelayCommand(() => _ = OrganizePhotosByDateAsync(), () => !IsBusy);
         _deleteMarkedUnwantedCommand = new RelayCommand(() => _ = DeleteMarkedUnwantedAsync(), () => !IsBusy);
         _exportDeletionListCommand = new RelayCommand(ExportDeletionListCsv, () => DeletionCandidates.Count > 0);
+        _exportDeletionListTxtCommand = new RelayCommand(ExportDeletionListTxt, () => DeletionCandidates.Count > 0);
         _applyCleanupModeCommand = new RelayCommand(ApplyCleanupMode);
         _autoSelectByGroupCommand = new RelayCommand(AutoSelectByGroup, () => DeletionCandidates.Any(x => x.CanDelete));
         _undoLastOperationCommand = new RelayCommand(() => _ = UndoLastOperationAsync(), () => !IsBusy && _undoBatches.Count > 0);
+        _undoSelectedOperationCommand = new RelayCommand(() => _ = UndoSelectedOperationAsync(), () => !IsBusy && !string.IsNullOrWhiteSpace(SelectedUndoBatchId));
 
         ScanFilesCommand = _scanFilesCommand;
         ApplyFiltersCommand = new RelayCommand(ApplyFilters);
@@ -108,11 +114,14 @@ public sealed class MainViewModel : ObservableObject
         OrganizePhotosByDateCommand = _organizePhotosByDateCommand;
         DeleteMarkedUnwantedCommand = _deleteMarkedUnwantedCommand;
         ExportDeletionListCommand = _exportDeletionListCommand;
+        ExportDeletionListTxtCommand = _exportDeletionListTxtCommand;
         ApplyCleanupModeCommand = _applyCleanupModeCommand;
         AutoSelectByGroupCommand = _autoSelectByGroupCommand;
         UndoLastOperationCommand = _undoLastOperationCommand;
+        UndoSelectedOperationCommand = _undoSelectedOperationCommand;
 
         _undoBatches = _undoHistoryService.Load();
+        RefreshUndoSelection();
 
         _ = ScanFilesAsync();
     }
@@ -140,9 +149,15 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OrganizePhotosByDateCommand { get; }
     public RelayCommand DeleteMarkedUnwantedCommand { get; }
     public RelayCommand ExportDeletionListCommand { get; }
+    public RelayCommand ExportDeletionListTxtCommand { get; }
     public RelayCommand ApplyCleanupModeCommand { get; }
     public RelayCommand AutoSelectByGroupCommand { get; }
     public RelayCommand UndoLastOperationCommand { get; }
+    public RelayCommand UndoSelectedOperationCommand { get; }
+
+    public IReadOnlyList<UndoBatch> UndoBatchOptions => _undoBatches
+        .OrderByDescending(x => x.CreatedAt)
+        .ToList();
 
     public bool IsBusy
     {
@@ -242,6 +257,8 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _selectedDeletionCandidate, value))
             {
                 DeletionPreviewImage = LoadPreviewImage(value?.FullPath, value?.Item.IsImage == true);
+                var canLoadKeep = value?.Item.IsImage == true && !string.IsNullOrWhiteSpace(value?.KeepFilePath);
+                KeepDeletionPreviewImage = LoadPreviewImage(value?.KeepFilePath, canLoadKeep);
             }
         }
     }
@@ -256,6 +273,30 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _deletionPreviewImage;
         private set => SetProperty(ref _deletionPreviewImage, value);
+    }
+
+    public BitmapImage? KeepDeletionPreviewImage
+    {
+        get => _keepDeletionPreviewImage;
+        private set => SetProperty(ref _keepDeletionPreviewImage, value);
+    }
+
+    public bool CompareModeEnabled
+    {
+        get => _compareModeEnabled;
+        set => SetProperty(ref _compareModeEnabled, value);
+    }
+
+    public string? SelectedUndoBatchId
+    {
+        get => _selectedUndoBatchId;
+        set
+        {
+            if (SetProperty(ref _selectedUndoBatchId, value))
+            {
+                RaiseCommandStates();
+            }
+        }
     }
 
     public string StatusMessage
@@ -338,11 +379,7 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _newMoveFolderPath, value);
     }
 
-    public bool IsDryRun
-    {
-        get => _isDryRun;
-        set => SetProperty(ref _isDryRun, value);
-    }
+    public bool IsDryRun => false;
 
     public string DateOrganizationMode
     {
@@ -542,13 +579,8 @@ public sealed class MainViewModel : ObservableObject
 
         var bytes = marked.Sum(x => x.Item.SizeBytes);
         var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
-        var confirm = System.Windows.MessageBox.Show(
-            $"{modeLabel} Processar {marked.Count} arquivos da lista de exclusão?\nEspaço estimado: {FormatBytes(bytes)}.\n\nOs arquivos serão movidos para uma área segura para permitir desfazer.",
-            "Confirmar exclusão",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Warning);
-
-        if (confirm != System.Windows.MessageBoxResult.Yes)
+        var firstConfirmation = $"{modeLabel} Processar {marked.Count} arquivos da lista de exclusão?\nEspaço estimado: {FormatBytes(bytes)}.\n\nOs arquivos serão movidos para uma área segura para permitir desfazer.";
+        if (!ConfirmDestructiveAction(firstConfirmation, "Confirmar exclusão"))
         {
             StatusMessage = "Exclusão cancelada pelo usuário.";
             return;
@@ -568,7 +600,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 var total = marked.Count;
                 var processed = 0;
-                var trashFolder = GetUndoTrashFolder(undoBatch.Id, CurrentFolder);
+                var trashFolder = GetUndoTrashFolder(undoBatch.Id);
                 if (!IsDryRun)
                 {
                     Directory.CreateDirectory(trashFolder);
@@ -778,13 +810,8 @@ public sealed class MainViewModel : ObservableObject
 
         var bytes = marked.Sum(x => x.SizeBytes);
         var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
-        var confirm = System.Windows.MessageBox.Show(
-            $"{modeLabel} Processar {marked.Count} arquivos indesejados?\nEspaço estimado: {FormatBytes(bytes)}.\n\nOs arquivos serão movidos para área segura para permitir desfazer.",
-            "Excluir indesejados",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Question);
-
-        if (confirm != System.Windows.MessageBoxResult.Yes)
+        var firstConfirmation = $"{modeLabel} Processar {marked.Count} arquivos indesejados?\nEspaço estimado: {FormatBytes(bytes)}.\n\nOs arquivos serão movidos para área segura para permitir desfazer.";
+        if (!ConfirmDestructiveAction(firstConfirmation, "Excluir indesejados"))
         {
             StatusMessage = "Exclusão de indesejados cancelada.";
             return;
@@ -803,7 +830,7 @@ public sealed class MainViewModel : ObservableObject
             await Task.Run(() =>
             {
                 var processed = 0;
-                var trashFolder = GetUndoTrashFolder(undoBatch.Id, CurrentFolder);
+                var trashFolder = GetUndoTrashFolder(undoBatch.Id);
                 if (!IsDryRun)
                 {
                     Directory.CreateDirectory(trashFolder);
@@ -1112,7 +1139,7 @@ public sealed class MainViewModel : ObservableObject
         var filePath = Path.Combine(exportDir, $"deletion-list-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
 
         var sb = new StringBuilder();
-        sb.AppendLine("Marcado;PodeExcluir;Estado;Nome;Extensao;Tamanho;Grupo;Regra;Motivo;ArquivoManter;Caminho");
+        sb.AppendLine("Marcado;PodeExcluir;Estado;Nome;Extensao;Tamanho;Similaridade;Grupo;Regra;Motivo;ArquivoManter;Caminho");
         foreach (var c in DeletionCandidates)
         {
             sb.AppendLine(string.Join(";",
@@ -1122,6 +1149,7 @@ public sealed class MainViewModel : ObservableObject
                 EscapeCsv(c.Name),
                 EscapeCsv(c.Extension),
                 EscapeCsv(c.SizeLabel),
+                EscapeCsv(c.SimilarityLabel),
                 EscapeCsv(c.GroupLabel),
                 EscapeCsv(c.Rule),
                 EscapeCsv(c.Reason),
@@ -1131,6 +1159,41 @@ public sealed class MainViewModel : ObservableObject
 
         File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
         StatusMessage = $"Lista de exclusão exportada em: {filePath}";
+    }
+
+    private void ExportDeletionListTxt()
+    {
+        if (DeletionCandidates.Count == 0)
+        {
+            StatusMessage = "Não há itens na lista de exclusão para exportar.";
+            return;
+        }
+
+        var exportDir = Path.Combine(Environment.CurrentDirectory, "exports");
+        Directory.CreateDirectory(exportDir);
+        var filePath = Path.Combine(exportDir, $"deletion-list-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+
+        var sb = new StringBuilder();
+        sb.AppendLine("LISTA DE EXCLUSAO");
+        sb.AppendLine($"Gerado em: {DateTime.Now:dd/MM/yyyy HH:mm:ss}");
+        sb.AppendLine(new string('-', 80));
+
+        foreach (var c in DeletionCandidates)
+        {
+            sb.AppendLine($"Marcado: {(c.IsMarked ? "Sim" : "Nao")} | PodeExcluir: {(c.CanDelete ? "Sim" : "Nao")} | Estado: {c.DeletionStateLabel}");
+            sb.AppendLine($"Nome: {c.Name}{c.Extension}");
+            sb.AppendLine($"Tamanho: {c.SizeLabel}");
+            sb.AppendLine($"Similaridade: {c.SimilarityLabel}");
+            sb.AppendLine($"Grupo: {c.GroupLabel}");
+            sb.AppendLine($"Regra: {c.Rule}");
+            sb.AppendLine($"Motivo: {c.Reason}");
+            sb.AppendLine($"Manter: {c.KeepFilePath}");
+            sb.AppendLine($"Caminho: {c.FullPath}");
+            sb.AppendLine(new string('-', 80));
+        }
+
+        File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+        StatusMessage = $"Lista de exclusão TXT exportada em: {filePath}";
     }
 
     private void SetAllCandidatesMarked(bool marked)
@@ -1313,6 +1376,7 @@ public sealed class MainViewModel : ObservableObject
         DeletionCandidates.Clear();
         SelectedDeletionCandidate = null;
         DeletionPreviewImage = null;
+        KeepDeletionPreviewImage = null;
         UpdateMarkedDeletionSummary();
         RaiseCommandStates();
     }
@@ -1382,6 +1446,28 @@ public sealed class MainViewModel : ObservableObject
         OperationProgressLabel = label;
     }
 
+    private static bool ConfirmDestructiveAction(string firstMessage, string title)
+    {
+        var confirm1 = System.Windows.MessageBox.Show(
+            firstMessage,
+            title,
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (confirm1 != System.Windows.MessageBoxResult.Yes)
+        {
+            return false;
+        }
+
+        var confirm2 = System.Windows.MessageBox.Show(
+            "Confirma novamente esta exclusão em massa? Esta ação poderá ser desfeita, mas recomendamos revisar a lista antes.",
+            $"{title} - confirmação final",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        return confirm2 == System.Windows.MessageBoxResult.Yes;
+    }
+
     private void RaiseCommandStates()
     {
         _scanFilesCommand.RaiseCanExecuteChanged();
@@ -1393,8 +1479,10 @@ public sealed class MainViewModel : ObservableObject
         _organizePhotosByDateCommand.RaiseCanExecuteChanged();
         _deleteMarkedUnwantedCommand.RaiseCanExecuteChanged();
         _exportDeletionListCommand.RaiseCanExecuteChanged();
+        _exportDeletionListTxtCommand.RaiseCanExecuteChanged();
         _autoSelectByGroupCommand.RaiseCanExecuteChanged();
         _undoLastOperationCommand.RaiseCanExecuteChanged();
+        _undoSelectedOperationCommand.RaiseCanExecuteChanged();
         _cancelCurrentOperationCommand.RaiseCanExecuteChanged();
         MarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
         UnmarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
@@ -1416,9 +1504,12 @@ public sealed class MainViewModel : ObservableObject
         };
     }
 
-    private static string GetUndoTrashFolder(string batchId, string currentFolder)
+    private static string GetUndoTrashFolder(string batchId)
     {
-        var baseFolder = Path.Combine(currentFolder, ".manipuladorfotos", "undo-trash");
+        var baseFolder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ManipuladorFotos",
+            "undo-trash");
         return Path.Combine(baseFolder, batchId);
     }
 
@@ -1431,6 +1522,7 @@ public sealed class MainViewModel : ObservableObject
 
         _undoBatches.Add(batch);
         _undoHistoryService.Save(_undoBatches);
+        RefreshUndoSelection();
         RaiseCommandStates();
     }
 
@@ -1443,8 +1535,31 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var batch = _undoBatches[^1];
+        await UndoBatchAsync(batch, "Desfazer a última operação?");
+    }
+
+    private async Task UndoSelectedOperationAsync()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedUndoBatchId))
+        {
+            StatusMessage = "Selecione um lote para desfazer.";
+            return;
+        }
+
+        var batch = _undoBatches.FirstOrDefault(x => x.Id.Equals(SelectedUndoBatchId, StringComparison.OrdinalIgnoreCase));
+        if (batch is null)
+        {
+            StatusMessage = "Lote selecionado não encontrado no histórico.";
+            return;
+        }
+
+        await UndoBatchAsync(batch, "Desfazer o lote selecionado?");
+    }
+
+    private async Task UndoBatchAsync(UndoBatch batch, string prompt)
+    {
         var confirm = System.Windows.MessageBox.Show(
-            $"Desfazer a última operação?\n{batch.Description}\nItens: {batch.Entries.Count}",
+            $"{prompt}\n{batch.Description}\nItens: {batch.Entries.Count}",
             "Desfazer operação",
             System.Windows.MessageBoxButton.YesNo,
             System.Windows.MessageBoxImage.Question);
@@ -1514,18 +1629,26 @@ public sealed class MainViewModel : ObservableObject
                 }
             }, cts.Token);
 
+            var batchIndex = _undoBatches.FindIndex(x => x.Id.Equals(batch.Id, StringComparison.OrdinalIgnoreCase));
+            if (batchIndex < 0)
+            {
+                StatusMessage = "Lote não encontrado no histórico durante o desfazer.";
+                return;
+            }
+
             if (remainingEntries.Count == 0)
             {
-                _undoBatches.RemoveAt(_undoBatches.Count - 1);
+                _undoBatches.RemoveAt(batchIndex);
             }
             else
             {
                 remainingEntries.Reverse();
                 batch.Entries = remainingEntries;
-                _undoBatches[^1] = batch;
+                _undoBatches[batchIndex] = batch;
             }
 
             _undoHistoryService.Save(_undoBatches);
+            RefreshUndoSelection();
             WriteOperationLog(logLines);
             StatusMessage = $"Desfazer concluído. Restaurados: {restored}. Falhas: {failed}.";
         }
@@ -1539,6 +1662,24 @@ public sealed class MainViewModel : ObservableObject
             RaiseCommandStates();
             _ = ScanFilesAsync();
         }
+    }
+
+    private void RefreshUndoSelection()
+    {
+        OnPropertyChanged(nameof(UndoBatchOptions));
+        if (_undoBatches.Count == 0)
+        {
+            SelectedUndoBatchId = null;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(SelectedUndoBatchId) &&
+            _undoBatches.Any(x => x.Id.Equals(SelectedUndoBatchId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        SelectedUndoBatchId = _undoBatches[^1].Id;
     }
 
     private static string EscapeCsv(string? value)

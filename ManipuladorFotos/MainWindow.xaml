@@ -112,9 +112,6 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <CheckBox Content="Incluir subpastas"
                               IsChecked="{Binding IncludeSubfolders}" />
-                    <CheckBox Content="Dry Run"
-                              IsChecked="{Binding IsDryRun}"
-                              ToolTip="Quando ativo, apenas simula operações sem alterar arquivos." />
                     <Button Content="Escanear"
                             Command="{Binding ScanFilesCommand}" />
                 </StackPanel>
@@ -352,7 +349,6 @@
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
@@ -360,105 +356,105 @@
                             CornerRadius="12"
                             BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1"
-                            Padding="10"
+                            Padding="8"
                             Margin="0,0,0,10">
-                        <WrapPanel>
-                            <TextBlock Text="Regras:"
-                                       VerticalAlignment="Center"
-                                       Margin="4,8,6,0"
-                                       FontWeight="SemiBold" />
-                            <CheckBox Content="Mesmo nome"
-                                      IsChecked="{Binding UseSameNameRule}" />
-                            <CheckBox Content="Mesmo tamanho"
-                                      IsChecked="{Binding UseSameSizeRule}" />
-                            <CheckBox Content="Semelhantes em sequência"
-                                      IsChecked="{Binding UseSimilarInSequenceRule}"
-                                      ToolTip="Compara fotos próximas no tempo para sugerir imagens parecidas da mesma sequência." />
+                        <Expander Header="Regras, Similaridade e Ações"
+                                  IsExpanded="False"
+                                  FontWeight="SemiBold"
+                                  Foreground="#2E3A46">
+                            <Grid Margin="0,6,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                            <StackPanel Margin="8,0,0,0">
-                                <TextBlock Text="Janela (segundos)" FontSize="12" Margin="4,0,4,2" />
-                                <TextBox Width="120"
-                                         Text="{Binding SimilarSecondsWindow, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="Tempo máximo entre duas fotos para serem comparadas como sequência (ex: 5, 10, 30)." />
-                            </StackPanel>
+                                <WrapPanel Grid.Row="0">
+                                    <TextBlock Text="Regras:"
+                                               VerticalAlignment="Center"
+                                               Margin="4,8,6,0"
+                                               FontWeight="SemiBold" />
+                                    <CheckBox Content="Mesmo nome"
+                                              IsChecked="{Binding UseSameNameRule}" />
+                                    <CheckBox Content="Mesmo tamanho"
+                                              IsChecked="{Binding UseSameSizeRule}" />
+                                    <CheckBox Content="Semelhantes em sequência"
+                                              IsChecked="{Binding UseSimilarInSequenceRule}"
+                                              ToolTip="Compara fotos próximas no tempo para sugerir imagens parecidas da mesma sequência." />
 
-                            <StackPanel>
-                                <TextBlock Text="Distância similaridade" FontSize="12" Margin="4,0,4,2" />
-                                <TextBox Width="150"
-                                         Text="{Binding SimilarDistanceThreshold, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="Sensibilidade visual. Menor valor = mais rigoroso (só muito parecidas). Maior valor = mais flexível." />
-                            </StackPanel>
+                                    <StackPanel Margin="8,0,0,0">
+                                        <TextBlock Text="Janela (segundos)" FontSize="12" Margin="4,0,4,2" />
+                                        <TextBox Width="120"
+                                                 Text="{Binding SimilarSecondsWindow, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Tempo máximo entre duas fotos para serem comparadas como sequência (ex: 5, 10, 30)." />
+                                    </StackPanel>
 
-                            <StackPanel>
-                                <TextBlock Text="Preferência para manter" FontSize="12" Margin="4,0,4,2" />
-                                <ComboBox Width="170"
-                                          ItemsSource="{Binding KeepPreferenceOptions}"
-                                          SelectedItem="{Binding KeepPreference}" />
-                            </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Distância similaridade" FontSize="12" Margin="4,0,4,2" />
+                                        <TextBox Width="150"
+                                                 Text="{Binding SimilarDistanceThreshold, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Sensibilidade visual. Menor valor = mais rigoroso (só muito parecidas). Maior valor = mais flexível." />
+                                    </StackPanel>
 
-                            <StackPanel>
-                                <TextBlock Text="Modo de limpeza" FontSize="12" Margin="4,0,4,2" />
-                                <ComboBox Width="130"
-                                          ItemsSource="{Binding CleanupModes}"
-                                          SelectedItem="{Binding CleanupMode}" />
-                            </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Preferência para manter" FontSize="12" Margin="4,0,4,2" />
+                                        <ComboBox Width="170"
+                                                  ItemsSource="{Binding KeepPreferenceOptions}"
+                                                  SelectedItem="{Binding KeepPreference}" />
+                                    </StackPanel>
 
-                            <Button Content="Gerar Lista de Exclusão"
-                                    Command="{Binding GenerateDeletionListCommand}"
-                                    Margin="14,20,4,4" />
-                            <Button Content="Aplicar Modo"
-                                    Command="{Binding ApplyCleanupModeCommand}"
-                                    Margin="4,20,4,4" />
-                            <Button Content="Marcar Todos"
-                                    Command="{Binding MarkAllDeletionCandidatesCommand}"
-                                    Margin="4,20,4,4" />
-                            <Button Content="Desmarcar Todos"
-                                    Command="{Binding UnmarkAllDeletionCandidatesCommand}"
-                                    Background="{StaticResource AccentBrush}"
-                                    Margin="4,20,4,4" />
-                            <Button Content="Seleção Automática"
-                                    Command="{Binding AutoSelectByGroupCommand}"
-                                    Margin="4,20,4,4" />
-                            <Button Content="Excluir Marcados (Lixeira)"
-                                    Command="{Binding DeleteMarkedCandidatesCommand}"
-                                    Background="#B42318"
-                                    Margin="4,20,4,4" />
-                            <Button Content="Exportar CSV"
-                                    Command="{Binding ExportDeletionListCommand}"
-                                    Margin="4,20,4,4" />
-                            <TextBlock Text="{Binding MarkedDeletionCount, StringFormat=Marcados: {0}}"
-                                       Margin="14,24,4,4"
-                                       VerticalAlignment="Center"
-                                       FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding MarkedDeletionSizeLabel, StringFormat=Espaço estimado: {0}}"
-                                       Margin="8,24,4,4"
-                                       VerticalAlignment="Center"
-                                       FontWeight="SemiBold" />
-                        </WrapPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Modo de limpeza" FontSize="12" Margin="4,0,4,2" />
+                                        <ComboBox Width="130"
+                                                  ItemsSource="{Binding CleanupModes}"
+                                                  SelectedItem="{Binding CleanupMode}" />
+                                    </StackPanel>
+                                </WrapPanel>
+
+                                <WrapPanel Grid.Row="1" Margin="0,4,0,0">
+                                    <Button Content="Gerar Lista de Exclusão"
+                                            Command="{Binding GenerateDeletionListCommand}"
+                                            Margin="4" />
+                                    <Button Content="Aplicar Modo"
+                                            Command="{Binding ApplyCleanupModeCommand}"
+                                            Margin="4" />
+                                    <Button Content="Marcar Todos"
+                                            Command="{Binding MarkAllDeletionCandidatesCommand}"
+                                            Margin="4" />
+                                    <Button Content="Desmarcar Todos"
+                                            Command="{Binding UnmarkAllDeletionCandidatesCommand}"
+                                            Background="{StaticResource AccentBrush}"
+                                            Margin="4" />
+                                    <Button Content="Seleção Automática"
+                                            Command="{Binding AutoSelectByGroupCommand}"
+                                            Margin="4" />
+                                    <Button Content="Exportar CSV"
+                                            Command="{Binding ExportDeletionListCommand}"
+                                            Margin="4" />
+                                    <Button Content="Exportar TXT"
+                                            Command="{Binding ExportDeletionListTxtCommand}"
+                                            Margin="4" />
+                                    <CheckBox Content="Modo comparação"
+                                              IsChecked="{Binding CompareModeEnabled}"
+                                              Margin="8,6,4,4"
+                                              ToolTip="Exibe lado a lado: foto selecionada e foto mantida do grupo." />
+                                    <TextBlock Text="{Binding MarkedDeletionCount, StringFormat=Marcados: {0}}"
+                                               Margin="12,10,4,4"
+                                               VerticalAlignment="Center"
+                                               FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding MarkedDeletionSizeLabel, StringFormat=Espaço estimado: {0}}"
+                                               Margin="8,10,4,4"
+                                               VerticalAlignment="Center"
+                                               FontWeight="SemiBold" />
+                                </WrapPanel>
+                            </Grid>
+                        </Expander>
                     </Border>
 
-                    <Border Grid.Row="1"
-                            Background="#EEF6FB"
-                            CornerRadius="10"
-                            BorderBrush="#C9DEEE"
-                            BorderThickness="1"
-                            Padding="8,6"
-                            Margin="0,0,0,10">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Como funciona a similaridade"
-                                       FontWeight="SemiBold"
-                                       Foreground="#1F4F72"
-                                       Margin="0,0,12,0" />
-                            <TextBlock Text="Janela: limita sequência | Distância: menor = rígido, maior = permissivo | Sugestão inicial: 10s / 8"
-                                       Foreground="#2E3A46" />
-                        </StackPanel>
-                    </Border>
-
-                    <Grid Grid.Row="2">
+                    <Grid Grid.Row="1">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="1.35*" />
                             <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="1.65*" />
                         </Grid.ColumnDefinitions>
 
                         <Border Grid.Column="0"
@@ -487,6 +483,7 @@
                                     <DataGridTextColumn Header="Extensão" Binding="{Binding Extension}" Width="0.8*" />
                                     <DataGridTextColumn Header="Tipo" Binding="{Binding Kind}" Width="0.8*" />
                                     <DataGridTextColumn Header="Tamanho" Binding="{Binding SizeLabel}" Width="0.8*" />
+                                    <DataGridTextColumn Header="Similaridade" Binding="{Binding SimilarityLabel}" Width="0.9*" />
                                     <DataGridTextColumn Header="Resolução" Binding="{Binding Item.ResolutionLabel}" Width="0.9*" />
                                     <DataGridTextColumn Header="Grupo" Binding="{Binding GroupLabel}" Width="1.6*" />
                                     <DataGridTextColumn Header="Estado" Binding="{Binding DeletionStateLabel}" Width="1.1*" />
@@ -502,29 +499,102 @@
                                 CornerRadius="12"
                                 BorderBrush="{StaticResource BorderBrush}"
                                 BorderThickness="1"
-                                Padding="10">
+                                Padding="8">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
-                                <Border CornerRadius="10"
-                                        BorderBrush="{StaticResource BorderBrush}"
-                                        BorderThickness="1"
-                                        Padding="8"
-                                        Background="#F8FAFC">
-                                    <Image Source="{Binding DeletionPreviewImage}" Stretch="Uniform" />
-                                </Border>
+                                <Grid>
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CompareModeEnabled}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Border CornerRadius="10"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="8"
+                                            Background="#F8FAFC">
+                                        <Image Source="{Binding DeletionPreviewImage}" Stretch="Uniform" />
+                                    </Border>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CompareModeEnabled}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0"
+                                            CornerRadius="10"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="6"
+                                            Background="#F8FAFC">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Text="Selecionada"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#2E3A46"
+                                                       Margin="2,0,0,6" />
+                                            <Image Grid.Row="1"
+                                                   Source="{Binding DeletionPreviewImage}"
+                                                   Stretch="Uniform" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Border Grid.Column="2"
+                                            CornerRadius="10"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="6"
+                                            Background="#F8FAFC">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Text="Original mantida"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#2E3A46"
+                                                       Margin="2,0,0,6" />
+                                            <Image Grid.Row="1"
+                                                   Source="{Binding KeepDeletionPreviewImage}"
+                                                   Stretch="Uniform" />
+                                        </Grid>
+                                    </Border>
+                                </Grid>
 
                                 <StackPanel Grid.Row="1" Margin="0,10,0,0">
                                     <TextBlock Text="Revisão antes da exclusão"
                                                FontWeight="Bold"
                                                FontSize="14"
                                                Foreground="#2E3A46" />
-                                    <TextBlock Text="{Binding SelectedDeletionCandidate.Name, TargetNullValue=Selecione um item da lista}" Margin="0,6,0,0" />
-                                    <TextBlock Text="{Binding SelectedDeletionCandidate.Reason}" TextWrapping="Wrap" Foreground="#55606B" />
-                                    <TextBlock Text="{Binding SelectedDeletionCandidate.FullPath}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#55606B" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.Name, TargetNullValue=Selecione um item da lista}" Margin="0,4,0,0" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.SimilarityLabel, StringFormat=Similaridade: {0}}" Foreground="#55606B" FontSize="11" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.Reason}" TextWrapping="Wrap" Foreground="#55606B" FontSize="11" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.FullPath}" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#55606B" FontSize="11" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -541,10 +611,34 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1">
             <DockPanel LastChildFill="True">
+                <Button Content="Excluir Marcados"
+                        Command="{Binding DeleteMarkedCandidatesCommand}"
+                        Background="#B42318"
+                        Foreground="White"
+                        Padding="10,6"
+                        Margin="8,0,0,0"
+                        DockPanel.Dock="Right" />
+                <Button Content="Desfazer Selecionado"
+                        Command="{Binding UndoSelectedOperationCommand}"
+                        Background="#99F6E4"
+                        Foreground="#111827"
+                        FontWeight="SemiBold"
+                        Padding="10,6"
+                        Margin="8,0,0,0"
+                        DockPanel.Dock="Right" />
+                <ComboBox Width="300"
+                          Margin="8,0,0,0"
+                          ItemsSource="{Binding UndoBatchOptions}"
+                          SelectedValuePath="Id"
+                          SelectedValue="{Binding SelectedUndoBatchId}"
+                          DisplayMemberPath="DisplayLabel"
+                          ToolTip="Selecione um lote para desfazer."
+                          DockPanel.Dock="Right" />
                 <Button Content="Desfazer Última"
                         Command="{Binding UndoLastOperationCommand}"
-                        Background="#7C3AED"
-                        Foreground="White"
+                        Background="#C4B5FD"
+                        Foreground="#111827"
+                        FontWeight="SemiBold"
                         Padding="10,6"
                         Margin="8,0,0,0"
                         DockPanel.Dock="Right" />
