@@ -11,25 +11,58 @@ public sealed class DuplicateAnalysisService
     private readonly Dictionary<string, string> _sha256Cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ulong> _dHashCache = new(StringComparer.OrdinalIgnoreCase);
 
-    public List<DeletionCandidate> BuildDeletionCandidates(IReadOnlyCollection<MediaItem> items, DuplicateAnalysisOptions options)
+    public List<DeletionCandidate> BuildDeletionCandidates(
+        IReadOnlyCollection<MediaItem> items,
+        DuplicateAnalysisOptions options,
+        CancellationToken cancellationToken = default,
+        IProgress<AnalysisProgressInfo>? progress = null)
     {
         var candidates = new Dictionary<string, CandidateAccumulator>(StringComparer.OrdinalIgnoreCase);
-
-        AddExactHashSuggestions(items, candidates, options);
-
+        var totalSteps = 1;
         if (options.UseSameNameRule)
         {
-            AddSameNameSuggestions(items, candidates, options);
+            totalSteps++;
         }
 
         if (options.UseSameSizeRule)
         {
-            AddSameSizeSuggestions(items, candidates, options);
+            totalSteps++;
         }
 
         if (options.UseSimilarInSequenceRule)
         {
-            AddSimilarSequenceSuggestions(items, candidates, options);
+            totalSteps++;
+        }
+
+        var completedSteps = 0;
+
+        AddExactHashSuggestions(items, candidates, options, cancellationToken);
+        completedSteps++;
+        progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando hash exato"));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (options.UseSameNameRule)
+        {
+            AddSameNameSuggestions(items, candidates, options, cancellationToken);
+            completedSteps++;
+            progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando mesmo nome"));
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        if (options.UseSameSizeRule)
+        {
+            AddSameSizeSuggestions(items, candidates, options, cancellationToken);
+            completedSteps++;
+            progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando mesmo tamanho"));
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        if (options.UseSimilarInSequenceRule)
+        {
+            AddSimilarSequenceSuggestions(items, candidates, options, cancellationToken);
+            completedSteps++;
+            progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando fotos semelhantes"));
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         return candidates.Values
@@ -44,7 +77,8 @@ public sealed class DuplicateAnalysisService
     private void AddExactHashSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
-        DuplicateAnalysisOptions options)
+        DuplicateAnalysisOptions options,
+        CancellationToken cancellationToken)
     {
         var groups = items
             .Where(x => x.IsImage && File.Exists(x.FullPath))
@@ -53,6 +87,7 @@ public sealed class DuplicateAnalysisService
 
         foreach (var group in groups)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var ordered = group.OrderByDescending(x => ScoreForKeep(x, options)).ToList();
             var keeper = ordered.First();
             var groupLabel = $"Hash:{group.Key[..8]}";
@@ -80,7 +115,8 @@ public sealed class DuplicateAnalysisService
     private void AddSameNameSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
-        DuplicateAnalysisOptions options)
+        DuplicateAnalysisOptions options,
+        CancellationToken cancellationToken)
     {
         var groups = items
             .Where(x => x.IsImage)
@@ -89,6 +125,7 @@ public sealed class DuplicateAnalysisService
 
         foreach (var group in groups)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var ordered = group.OrderByDescending(x => ScoreForKeep(x, options)).ToList();
             var keeper = ordered.First();
             var groupLabel = $"Nome:{keeper.Name}{keeper.Extension}";
@@ -116,7 +153,8 @@ public sealed class DuplicateAnalysisService
     private void AddSameSizeSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
-        DuplicateAnalysisOptions options)
+        DuplicateAnalysisOptions options,
+        CancellationToken cancellationToken)
     {
         var groups = items
             .Where(x => x.IsImage && x.SizeBytes > 0)
@@ -125,6 +163,7 @@ public sealed class DuplicateAnalysisService
 
         foreach (var group in groups)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var ordered = group.OrderByDescending(x => ScoreForKeep(x, options)).ToList();
             var keeper = ordered.First();
             var groupLabel = $"Tam:{keeper.SizeLabel}";
@@ -152,7 +191,8 @@ public sealed class DuplicateAnalysisService
     private void AddSimilarSequenceSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
-        DuplicateAnalysisOptions options)
+        DuplicateAnalysisOptions options,
+        CancellationToken cancellationToken)
     {
         var photos = items
             .Where(x => x.IsImage && File.Exists(x.FullPath))
@@ -161,9 +201,11 @@ public sealed class DuplicateAnalysisService
 
         for (var i = 0; i < photos.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var left = photos[i];
             for (var j = i + 1; j < photos.Count; j++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var right = photos[j];
                 var delta = (right.CreationTime - left.CreationTime).TotalSeconds;
                 if (delta > options.SimilarSecondsWindow)

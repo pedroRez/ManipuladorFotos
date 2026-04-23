@@ -312,6 +312,7 @@
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
@@ -331,16 +332,21 @@
                             <CheckBox Content="Mesmo tamanho"
                                       IsChecked="{Binding UseSameSizeRule}" />
                             <CheckBox Content="Semelhantes em sequência"
-                                      IsChecked="{Binding UseSimilarInSequenceRule}" />
+                                      IsChecked="{Binding UseSimilarInSequenceRule}"
+                                      ToolTip="Compara fotos próximas no tempo para sugerir imagens parecidas da mesma sequência." />
 
                             <StackPanel Margin="8,0,0,0">
                                 <TextBlock Text="Janela (segundos)" FontSize="12" Margin="4,0,4,2" />
-                                <TextBox Width="120" Text="{Binding SimilarSecondsWindow, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBox Width="120"
+                                         Text="{Binding SimilarSecondsWindow, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Tempo máximo entre duas fotos para serem comparadas como sequência (ex: 5, 10, 30)." />
                             </StackPanel>
 
                             <StackPanel>
                                 <TextBlock Text="Distância similaridade" FontSize="12" Margin="4,0,4,2" />
-                                <TextBox Width="150" Text="{Binding SimilarDistanceThreshold, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBox Width="150"
+                                         Text="{Binding SimilarDistanceThreshold, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Sensibilidade visual. Menor valor = mais rigoroso (só muito parecidas). Maior valor = mais flexível." />
                             </StackPanel>
 
                             <StackPanel>
@@ -375,7 +381,30 @@
                         </WrapPanel>
                     </Border>
 
-                    <Grid Grid.Row="1">
+                    <Border Grid.Row="1"
+                            Background="#EEF6FB"
+                            CornerRadius="10"
+                            BorderBrush="#C9DEEE"
+                            BorderThickness="1"
+                            Padding="10"
+                            Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Como funciona a similaridade"
+                                       FontWeight="SemiBold"
+                                       Foreground="#1F4F72" />
+                            <TextBlock Text="• Janela (segundos): limita a comparação a fotos tiradas em sequência."
+                                       Margin="0,4,0,0"
+                                       Foreground="#2E3A46" />
+                            <TextBlock Text="• Distância similaridade: menor = mais rígido, maior = mais permissivo."
+                                       Margin="0,2,0,0"
+                                       Foreground="#2E3A46" />
+                            <TextBlock Text="Sugestão: comece com 10 segundos e distância 8, revise os grupos e ajuste."
+                                       Margin="0,2,0,0"
+                                       Foreground="#2E3A46" />
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="12" />
@@ -461,14 +490,33 @@
                 Background="#FFFFFF"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1">
-            <DockPanel>
-                <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" />
-                <TextBlock Text="Processando..."
-                           Foreground="#1F6F8B"
-                           FontWeight="SemiBold"
-                           Margin="12,0,0,0"
-                           VerticalAlignment="Center"
-                           Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibilityConverter}}" />
+            <DockPanel LastChildFill="True">
+                <Button Content="Cancelar"
+                        Command="{Binding CancelCurrentOperationCommand}"
+                        Background="#B42318"
+                        Foreground="White"
+                        Padding="10,6"
+                        Margin="8,0,0,0"
+                        DockPanel.Dock="Right"
+                        Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibilityConverter}}" />
+                <StackPanel>
+                    <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal"
+                                Margin="0,6,0,0"
+                                Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <ProgressBar Width="280"
+                                     Height="12"
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Value="{Binding OperationProgressPercent, Mode=OneWay}"
+                                     IsIndeterminate="{Binding IsProgressIndeterminate}" />
+                        <TextBlock Text="{Binding OperationProgressLabel}"
+                                   Foreground="#1F6F8B"
+                                   FontWeight="SemiBold"
+                                   Margin="10,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </StackPanel>
             </DockPanel>
         </Border>
     </Grid>

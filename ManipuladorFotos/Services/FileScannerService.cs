@@ -16,7 +16,11 @@ public sealed class FileScannerService
         ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".webm", ".m4v"
     };
 
-    public List<MediaItem> Scan(string folderPath, bool includeSubfolders)
+    public List<MediaItem> Scan(
+        string folderPath,
+        bool includeSubfolders,
+        CancellationToken cancellationToken = default,
+        IProgress<ScanProgressInfo>? progress = null)
     {
         var result = new List<MediaItem>();
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
@@ -26,18 +30,21 @@ public sealed class FileScannerService
 
         var searchOption = includeSubfolders ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
 
-        IEnumerable<string> files;
+        List<string> files;
         try
         {
-            files = Directory.EnumerateFiles(folderPath, "*.*", searchOption);
+            files = Directory.EnumerateFiles(folderPath, "*.*", searchOption).ToList();
         }
         catch
         {
             return result;
         }
 
+        var total = files.Count;
+        var processed = 0;
         foreach (var path in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var info = new FileInfo(path);
@@ -57,6 +64,12 @@ public sealed class FileScannerService
                     Width = width,
                     Height = height
                 });
+
+                processed++;
+                if (processed % 200 == 0)
+                {
+                    progress?.Report(new ScanProgressInfo(processed, total));
+                }
             }
             catch
             {
@@ -64,10 +77,16 @@ public sealed class FileScannerService
             }
         }
 
+        progress?.Report(new ScanProgressInfo(processed, total));
         return result;
     }
 
-    public List<MediaItem> ScanUnwantedByExtensions(string folderPath, bool includeSubfolders, IEnumerable<string> extensions)
+    public List<MediaItem> ScanUnwantedByExtensions(
+        string folderPath,
+        bool includeSubfolders,
+        IEnumerable<string> extensions,
+        CancellationToken cancellationToken = default,
+        IProgress<ScanProgressInfo>? progress = null)
     {
         var normalized = extensions
             .Select(NormalizeExtension)
@@ -79,7 +98,8 @@ public sealed class FileScannerService
             return [];
         }
 
-        var all = Scan(folderPath, includeSubfolders);
+        var all = Scan(folderPath, includeSubfolders, cancellationToken, progress);
+        cancellationToken.ThrowIfCancellationRequested();
         return all.Where(x => normalized.Contains(x.Extension)).ToList();
     }
 

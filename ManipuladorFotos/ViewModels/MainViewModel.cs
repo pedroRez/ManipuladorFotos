@@ -19,6 +19,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _scanUnwantedCommand;
     private readonly RelayCommand _generateDeletionListCommand;
     private readonly RelayCommand _deleteMarkedCandidatesCommand;
+    private readonly RelayCommand _cancelCurrentOperationCommand;
+    private readonly RelayCommand _moveMarkedPhotosCommand;
 
     private List<MediaItem> _allItems = [];
     private bool _isBusy;
@@ -47,6 +49,11 @@ public sealed class MainViewModel : ObservableObject
     private string _keepPreference = "Maior resolução";
     private int _markedDeletionCount;
     private long _markedDeletionBytes;
+    private CancellationTokenSource? _operationCts;
+    private double _operationProgressPercent;
+    private bool _isProgressIndeterminate;
+    private string _operationProgressLabel = string.Empty;
+    private string _newMoveFolderPath = "Selecionadas";
 
     public MainViewModel()
     {
@@ -60,7 +67,9 @@ public sealed class MainViewModel : ObservableObject
         _scanFilesCommand = new RelayCommand(() => _ = ScanFilesAsync(), () => !IsBusy);
         _scanUnwantedCommand = new RelayCommand(() => _ = ScanUnwantedAsync(), () => !IsBusy);
         _generateDeletionListCommand = new RelayCommand(() => _ = GenerateDeletionListAsync(), () => !IsBusy && _allItems.Count > 0);
-        _deleteMarkedCandidatesCommand = new RelayCommand(() => _ = DeleteMarkedCandidatesAsync(), () => !IsBusy && DeletionCandidates.Any(x => x.IsMarked));
+        _deleteMarkedCandidatesCommand = new RelayCommand(() => _ = DeleteMarkedCandidatesAsync(), () => !IsBusy && DeletionCandidates.Any(x => x.IsMarked && x.CanDelete));
+        _cancelCurrentOperationCommand = new RelayCommand(CancelCurrentOperation, () => IsBusy);
+        _moveMarkedPhotosCommand = new RelayCommand(() => _ = MoveMarkedPhotosAsync(), () => !IsBusy && DisplayedItems.Any(x => x.IsMarked && x.IsImage));
 
         ScanFilesCommand = _scanFilesCommand;
         ApplyFiltersCommand = new RelayCommand(ApplyFilters);
@@ -70,6 +79,8 @@ public sealed class MainViewModel : ObservableObject
         MarkAllDeletionCandidatesCommand = new RelayCommand(() => SetAllCandidatesMarked(true), () => DeletionCandidates.Count > 0);
         UnmarkAllDeletionCandidatesCommand = new RelayCommand(() => SetAllCandidatesMarked(false), () => DeletionCandidates.Count > 0);
         DeleteMarkedCandidatesCommand = _deleteMarkedCandidatesCommand;
+        CancelCurrentOperationCommand = _cancelCurrentOperationCommand;
+        MoveMarkedPhotosCommand = _moveMarkedPhotosCommand;
 
         _ = ScanFilesAsync();
     }
@@ -89,6 +100,8 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand MarkAllDeletionCandidatesCommand { get; }
     public RelayCommand UnmarkAllDeletionCandidatesCommand { get; }
     public RelayCommand DeleteMarkedCandidatesCommand { get; }
+    public RelayCommand CancelCurrentOperationCommand { get; }
+    public RelayCommand MoveMarkedPhotosCommand { get; }
 
     public bool IsBusy
     {
@@ -260,6 +273,30 @@ public sealed class MainViewModel : ObservableObject
 
     public string MarkedDeletionSizeLabel => FormatBytes(_markedDeletionBytes);
 
+    public double OperationProgressPercent
+    {
+        get => _operationProgressPercent;
+        private set => SetProperty(ref _operationProgressPercent, value);
+    }
+
+    public bool IsProgressIndeterminate
+    {
+        get => _isProgressIndeterminate;
+        private set => SetProperty(ref _isProgressIndeterminate, value);
+    }
+
+    public string OperationProgressLabel
+    {
+        get => _operationProgressLabel;
+        private set => SetProperty(ref _operationProgressLabel, value);
+    }
+
+    public string NewMoveFolderPath
+    {
+        get => _newMoveFolderPath;
+        set => SetProperty(ref _newMoveFolderPath, value);
+    }
+
     private void BrowseFolder()
     {
         using var dialog = new WinForms.FolderBrowserDialog
@@ -289,16 +326,26 @@ public sealed class MainViewModel : ObservableObject
         ClearDeletionCandidates();
         SelectedItem = null;
 
-        IsBusy = true;
-        StatusMessage = "Escaneando arquivos...";
+        var cts = BeginOperation("Escaneando arquivos...", true);
 
         try
         {
-            var scanned = await Task.Run(() => _scanner.Scan(CurrentFolder, IncludeSubfolders));
+            var progress = new Progress<ScanProgressInfo>(p =>
+            {
+                var percent = p.Total > 0 ? (double)p.Processed / p.Total * 100d : 0d;
+                UpdateProgress(percent, false, $"Escaneando: {p.Processed}/{p.Total}");
+                StatusMessage = $"Escaneando arquivos... {p.Processed}/{p.Total}";
+            });
+
+            var scanned = await Task.Run(() => _scanner.Scan(CurrentFolder, IncludeSubfolders, cts.Token, progress), cts.Token);
             _allItems = scanned;
             ApplyFilters();
             ClearDeletionCandidates();
             StatusMessage = $"{_allItems.Count} arquivos encontrados.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Escaneamento cancelado.";
         }
         catch (Exception ex)
         {
@@ -306,8 +353,7 @@ public sealed class MainViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
-            RaiseCommandStates();
+            EndOperation(cts);
         }
     }
 
@@ -324,13 +370,18 @@ public sealed class MainViewModel : ObservableObject
 
         UnwantedItems.Clear();
 
-        IsBusy = true;
-        StatusMessage = "Buscando arquivos indesejados...";
+        var cts = BeginOperation("Buscando arquivos indesejados...", true);
 
         try
         {
-            var unwanted = await Task.Run(() => _scanner.ScanUnwantedByExtensions(CurrentFolder, IncludeSubfolders, extensions));
-            UnwantedItems.Clear();
+            var progress = new Progress<ScanProgressInfo>(p =>
+            {
+                var percent = p.Total > 0 ? (double)p.Processed / p.Total * 100d : 0d;
+                UpdateProgress(percent, false, $"Busca indesejados: {p.Processed}/{p.Total}");
+                StatusMessage = $"Buscando arquivos indesejados... {p.Processed}/{p.Total}";
+            });
+
+            var unwanted = await Task.Run(() => _scanner.ScanUnwantedByExtensions(CurrentFolder, IncludeSubfolders, extensions, cts.Token, progress), cts.Token);
             foreach (var item in unwanted.OrderBy(x => x.Extension).ThenBy(x => x.Name))
             {
                 UnwantedItems.Add(item);
@@ -338,14 +389,17 @@ public sealed class MainViewModel : ObservableObject
 
             StatusMessage = $"{UnwantedItems.Count} arquivos indesejados encontrados.";
         }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Busca de indesejados cancelada.";
+        }
         catch (Exception ex)
         {
             StatusMessage = $"Erro na busca de indesejados: {ex.Message}";
         }
         finally
         {
-            IsBusy = false;
-            RaiseCommandStates();
+            EndOperation(cts);
         }
     }
 
@@ -359,8 +413,7 @@ public sealed class MainViewModel : ObservableObject
 
         ClearDeletionCandidates();
 
-        IsBusy = true;
-        StatusMessage = "Gerando lista de exclusão com base nas regras...";
+        var cts = BeginOperation("Gerando lista de exclusão com base nas regras...", false);
 
         try
         {
@@ -374,7 +427,14 @@ public sealed class MainViewModel : ObservableObject
                 KeepPreference = KeepPreference
             };
 
-            var candidates = await Task.Run(() => _duplicateAnalysisService.BuildDeletionCandidates(_allItems, options));
+            var progress = new Progress<AnalysisProgressInfo>(p =>
+            {
+                var percent = p.TotalSteps > 0 ? (double)p.CompletedSteps / p.TotalSteps * 100d : 0d;
+                UpdateProgress(percent, false, $"{p.Stage} ({p.CompletedSteps}/{p.TotalSteps})");
+                StatusMessage = $"Gerando lista de exclusão... {p.Stage}";
+            });
+
+            var candidates = await Task.Run(() => _duplicateAnalysisService.BuildDeletionCandidates(_allItems, options, cts.Token, progress), cts.Token);
 
             foreach (var candidate in candidates)
             {
@@ -386,14 +446,17 @@ public sealed class MainViewModel : ObservableObject
             var protectedCount = DeletionCandidates.Count(x => !x.CanDelete);
             StatusMessage = $"Lista gerada: {DeletionCandidates.Count} itens ({protectedCount} originais protegidas).";
         }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Geração da lista de exclusão cancelada.";
+        }
         catch (Exception ex)
         {
             StatusMessage = $"Erro ao gerar lista de exclusão: {ex.Message}";
         }
         finally
         {
-            IsBusy = false;
-            RaiseCommandStates();
+            EndOperation(cts);
         }
     }
 
@@ -419,59 +482,165 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
-        StatusMessage = "Enviando arquivos marcados para a lixeira...";
+        var cts = BeginOperation("Enviando arquivos marcados para a lixeira...", false);
 
         var deleted = 0;
         var failed = 0;
 
-        await Task.Run(() =>
+        try
         {
-            foreach (var candidate in marked)
+            await Task.Run(() =>
             {
-                try
+                var total = marked.Count;
+                var processed = 0;
+
+                foreach (var candidate in marked)
                 {
-                    if (!File.Exists(candidate.FullPath))
+                    cts.Token.ThrowIfCancellationRequested();
+                    try
                     {
-                        continue;
+                        if (File.Exists(candidate.FullPath))
+                        {
+                            FileSystem.DeleteFile(
+                                candidate.FullPath,
+                                UIOption.OnlyErrorDialogs,
+                                RecycleOption.SendToRecycleBin,
+                                UICancelOption.DoNothing);
+
+                            deleted++;
+                        }
                     }
-
-                    FileSystem.DeleteFile(
-                        candidate.FullPath,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.SendToRecycleBin,
-                        UICancelOption.DoNothing);
-
-                    deleted++;
+                    catch
+                    {
+                        failed++;
+                    }
+                    finally
+                    {
+                        processed++;
+                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
+                        UpdateProgress(percent, false, $"Exclusão: {processed}/{total}");
+                    }
                 }
-                catch
-                {
-                    failed++;
-                }
+            }, cts.Token);
+
+            var deletedPaths = marked.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
+
+            RemoveByPath(DisplayedItems, deletedPaths);
+            RemoveByPath(UnwantedItems, deletedPaths);
+            RemoveCandidatesByPath(deletedPaths);
+
+            if (SelectedItem is not null && deletedPaths.Contains(SelectedItem.FullPath))
+            {
+                SelectedItem = null;
             }
-        });
 
-        var deletedPaths = marked.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
+            if (SelectedDeletionCandidate is not null && deletedPaths.Contains(SelectedDeletionCandidate.FullPath))
+            {
+                SelectedDeletionCandidate = null;
+            }
 
-        RemoveByPath(DisplayedItems, deletedPaths);
-        RemoveByPath(UnwantedItems, deletedPaths);
-        RemoveCandidatesByPath(deletedPaths);
-
-        if (SelectedItem is not null && deletedPaths.Contains(SelectedItem.FullPath))
+            UpdateMarkedDeletionSummary();
+            StatusMessage = $"Exclusão concluída. Enviados para lixeira: {deleted}. Falhas: {failed}.";
+        }
+        catch (OperationCanceledException)
         {
+            StatusMessage = "Exclusão cancelada.";
+        }
+        finally
+        {
+            EndOperation(cts);
+        }
+    }
+
+    private async Task MoveMarkedPhotosAsync()
+    {
+        var markedPhotos = DisplayedItems.Where(x => x.IsMarked && x.IsImage).ToList();
+        if (markedPhotos.Count == 0)
+        {
+            StatusMessage = "Nenhuma foto marcada para mover.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(NewMoveFolderPath))
+        {
+            StatusMessage = "Informe o nome ou caminho da nova pasta de destino.";
+            return;
+        }
+
+        var destinationFolder = Path.IsPathRooted(NewMoveFolderPath)
+            ? NewMoveFolderPath
+            : Path.Combine(CurrentFolder, NewMoveFolderPath);
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Mover {markedPhotos.Count} fotos para:\n{destinationFolder}\n\nDeseja continuar?",
+            "Confirmar movimentação",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            StatusMessage = "Movimentação cancelada pelo usuário.";
+            return;
+        }
+
+        var cts = BeginOperation("Movendo fotos selecionadas...", false);
+        var moved = 0;
+        var failed = 0;
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                Directory.CreateDirectory(destinationFolder);
+                var total = markedPhotos.Count;
+                var processed = 0;
+
+                foreach (var photo in markedPhotos)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (!File.Exists(photo.FullPath))
+                        {
+                            processed++;
+                            continue;
+                        }
+
+                        var fileName = Path.GetFileName(photo.FullPath);
+                        var targetPath = GetUniqueDestinationPath(destinationFolder, fileName);
+                        File.Move(photo.FullPath, targetPath);
+                        moved++;
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+                    finally
+                    {
+                        processed++;
+                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
+                        UpdateProgress(percent, false, $"Movendo: {processed}/{total}");
+                    }
+                }
+            }, cts.Token);
+
+            var movedPaths = markedPhotos.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _allItems = _allItems.Where(x => !movedPaths.Contains(x.FullPath)).ToList();
+            RemoveByPath(DisplayedItems, movedPaths);
+            RemoveByPath(UnwantedItems, movedPaths);
+            RemoveCandidatesByPath(movedPaths);
             SelectedItem = null;
+            StatusMessage = $"Movimentação concluída. Movidas: {moved}. Falhas: {failed}.";
         }
-
-        if (SelectedDeletionCandidate is not null && deletedPaths.Contains(SelectedDeletionCandidate.FullPath))
+        catch (OperationCanceledException)
         {
-            SelectedDeletionCandidate = null;
+            StatusMessage = "Movimentação cancelada.";
         }
-
-        UpdateMarkedDeletionSummary();
-        StatusMessage = $"Exclusão concluída. Enviados para lixeira: {deleted}. Falhas: {failed}.";
-        IsBusy = false;
-        RaiseCommandStates();
+        finally
+        {
+            EndOperation(cts);
+        }
     }
 
     private void SetAllCandidatesMarked(bool marked)
@@ -625,12 +794,51 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private CancellationTokenSource BeginOperation(string startMessage, bool indeterminate)
+    {
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+        IsBusy = true;
+        StatusMessage = startMessage;
+        UpdateProgress(0, indeterminate, "Iniciando...");
+        return _operationCts;
+    }
+
+    private void EndOperation(CancellationTokenSource cts)
+    {
+        if (ReferenceEquals(_operationCts, cts))
+        {
+            _operationCts = null;
+        }
+
+        cts.Dispose();
+        UpdateProgress(0, false, string.Empty);
+        IsBusy = false;
+        RaiseCommandStates();
+    }
+
+    private void CancelCurrentOperation()
+    {
+        _operationCts?.Cancel();
+        StatusMessage = "Cancelando operação...";
+        UpdateProgress(OperationProgressPercent, true, "Cancelando...");
+    }
+
+    private void UpdateProgress(double percent, bool indeterminate, string label)
+    {
+        OperationProgressPercent = Math.Clamp(percent, 0, 100);
+        IsProgressIndeterminate = indeterminate;
+        OperationProgressLabel = label;
+    }
+
     private void RaiseCommandStates()
     {
         _scanFilesCommand.RaiseCanExecuteChanged();
         _scanUnwantedCommand.RaiseCanExecuteChanged();
         _generateDeletionListCommand.RaiseCanExecuteChanged();
         _deleteMarkedCandidatesCommand.RaiseCanExecuteChanged();
+        _moveMarkedPhotosCommand.RaiseCanExecuteChanged();
+        _cancelCurrentOperationCommand.RaiseCanExecuteChanged();
         MarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
         UnmarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
     }
@@ -687,5 +895,28 @@ public sealed class MainViewModel : ObservableObject
             < 1024L * 1024L * 1024L => $"{bytes / 1024.0 / 1024.0:F1} MB",
             _ => $"{bytes / 1024.0 / 1024.0 / 1024.0:F2} GB"
         };
+    }
+
+    private static string GetUniqueDestinationPath(string folder, string fileName)
+    {
+        var target = Path.Combine(folder, fileName);
+        if (!File.Exists(target))
+        {
+            return target;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        var index = 1;
+        while (true)
+        {
+            var candidate = Path.Combine(folder, $"{name}_{index}{ext}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            index++;
+        }
     }
 }
