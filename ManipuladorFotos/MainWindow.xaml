@@ -411,11 +411,11 @@
                                 </WrapPanel>
 
                                 <WrapPanel Grid.Row="1" Margin="0,4,0,0">
-                                    <Button Content="Gerar Lista de Exclusão"
-                                            Command="{Binding GenerateDeletionListCommand}"
-                                            Margin="4" />
                                     <Button Content="Aplicar Modo"
                                             Command="{Binding ApplyCleanupModeCommand}"
+                                            Margin="4" />
+                                    <Button Content="Gerar Lista de Exclusão"
+                                            Command="{Binding GenerateDeletionListCommand}"
                                             Margin="4" />
                                     <Button Content="Marcar Todos"
                                             Command="{Binding MarkAllDeletionCandidatesCommand}"
@@ -670,5 +670,48 @@
                 </StackPanel>
             </DockPanel>
         </Border>
+
+        <Grid Grid.RowSpan="4"
+              Panel.ZIndex="1000"
+              Background="#660B1A24"
+              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Border Width="520"
+                    MaxWidth="680"
+                    CornerRadius="14"
+                    Padding="16"
+                    Background="White"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+                <StackPanel>
+                    <TextBlock Text="Processando..."
+                               FontSize="20"
+                               FontWeight="Bold"
+                               Foreground="#1F6F8B" />
+                    <TextBlock Text="{Binding StatusMessage}"
+                               TextWrapping="Wrap"
+                               Margin="0,8,0,0"
+                               Foreground="#2E3A46" />
+                    <TextBlock Text="{Binding OperationProgressLabel}"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,0"
+                               Foreground="#55606B" />
+                    <ProgressBar Height="14"
+                                 Margin="0,12,0,0"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Value="{Binding OperationProgressPercent, Mode=OneWay}"
+                                 IsIndeterminate="{Binding IsProgressIndeterminate}" />
+                    <Button Content="Cancelar Operação"
+                            Command="{Binding CancelCurrentOperationCommand}"
+                            Background="#B42318"
+                            Foreground="White"
+                            HorizontalAlignment="Right"
+                            Margin="0,14,0,0"
+                            Padding="14,8" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

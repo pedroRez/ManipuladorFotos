@@ -72,6 +72,11 @@ public sealed class MainViewModel : ObservableObject
     private bool _compareModeEnabled;
     private List<UndoBatch> _undoBatches = [];
     private string? _selectedUndoBatchId;
+    private string _lastScanFolder = string.Empty;
+    private bool _lastScanIncludeSubfolders;
+    private int _lastScanFileCount = -1;
+    private long _lastScanLatestWriteUtcTicks = -1;
+    private const string InternalFolderName = ".manipuladorfotos";
 
     public MainViewModel()
     {
@@ -86,7 +91,7 @@ public sealed class MainViewModel : ObservableObject
         BrowseFolderCommand = new RelayCommand(BrowseFolder);
         _scanFilesCommand = new RelayCommand(() => _ = ScanFilesAsync(), () => !IsBusy);
         _scanUnwantedCommand = new RelayCommand(() => _ = ScanUnwantedAsync(), () => !IsBusy);
-        _generateDeletionListCommand = new RelayCommand(() => _ = GenerateDeletionListAsync(), () => !IsBusy && _allItems.Count > 0);
+        _generateDeletionListCommand = new RelayCommand(() => _ = GenerateDeletionListAsync(), () => !IsBusy);
         _deleteMarkedCandidatesCommand = new RelayCommand(() => _ = DeleteMarkedCandidatesAsync(), () => !IsBusy && DeletionCandidates.Any(x => x.IsMarked && x.CanDelete));
         _cancelCurrentOperationCommand = new RelayCommand(CancelCurrentOperation, () => IsBusy);
         _moveMarkedPhotosCommand = new RelayCommand(() => _ = MoveMarkedPhotosAsync(), () => !IsBusy);
@@ -447,6 +452,7 @@ public sealed class MainViewModel : ObservableObject
 
             var scanned = await Task.Run(() => _scanner.Scan(CurrentFolder, IncludeSubfolders, cts.Token, progress), cts.Token);
             _allItems = scanned;
+            RegisterScanSignature(scanned);
             ApplyFilters();
             ClearDeletionCandidates();
             StatusMessage = $"{_allItems.Count} arquivos encontrados.";
@@ -513,10 +519,26 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task GenerateDeletionListAsync()
     {
-        if (_allItems.Count == 0)
+        if (!Directory.Exists(CurrentFolder))
         {
-            StatusMessage = "Escaneie a pasta antes de gerar a lista de exclusão.";
+            StatusMessage = "Pasta inválida. Escolha uma pasta existente.";
             return;
+        }
+
+        var requiresAutoScan = await RequiresAutoScanForDeletionAsync();
+        if (requiresAutoScan)
+        {
+            StatusMessage = "Executando escaneamento automático antes da lista de exclusão...";
+            await ScanFilesAsync();
+            if (_allItems.Count == 0)
+            {
+                StatusMessage = "Nenhum arquivo encontrado após o escaneamento.";
+                return;
+            }
+        }
+        else
+        {
+            StatusMessage = "Usando o último escaneamento (sem alterações detectadas).";
         }
 
         ClearDeletionCandidates();
@@ -1681,6 +1703,92 @@ public sealed class MainViewModel : ObservableObject
 
         SelectedUndoBatchId = _undoBatches[^1].Id;
     }
+
+    private void RegisterScanSignature(IReadOnlyCollection<MediaItem> scannedItems)
+    {
+        _lastScanFolder = CurrentFolder;
+        _lastScanIncludeSubfolders = IncludeSubfolders;
+        _lastScanFileCount = scannedItems.Count;
+        _lastScanLatestWriteUtcTicks = scannedItems.Count == 0
+            ? 0
+            : scannedItems.Max(x => x.LastWriteTime.ToUniversalTime().Ticks);
+    }
+
+    private async Task<bool> RequiresAutoScanForDeletionAsync()
+    {
+        if (_allItems.Count == 0)
+        {
+            return true;
+        }
+
+        if (!string.Equals(_lastScanFolder, CurrentFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (_lastScanIncludeSubfolders != IncludeSubfolders)
+        {
+            return true;
+        }
+
+        if (_lastScanFileCount < 0 || _lastScanLatestWriteUtcTicks < 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            var snapshot = await Task.Run(() => CaptureCurrentFolderSnapshot(CurrentFolder, IncludeSubfolders));
+            return snapshot.FileCount != _lastScanFileCount ||
+                   snapshot.LatestWriteUtcTicks != _lastScanLatestWriteUtcTicks;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static FolderSnapshot CaptureCurrentFolderSnapshot(string folderPath, bool includeSubfolders)
+    {
+        var searchOption = includeSubfolders ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+        var count = 0;
+        long latestWrite = 0;
+
+        foreach (var path in Directory.EnumerateFiles(folderPath, "*.*", searchOption))
+        {
+            if (IsInternalAppPath(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(path);
+                _ = info.Length;
+                count++;
+                var ticks = info.LastWriteTimeUtc.Ticks;
+                if (ticks > latestWrite)
+                {
+                    latestWrite = ticks;
+                }
+            }
+            catch
+            {
+                // Ignora arquivos sem acesso durante verificação.
+            }
+        }
+
+        return new FolderSnapshot(count, latestWrite);
+    }
+
+    private static bool IsInternalAppPath(string fullPath)
+    {
+        var normalized = Path.GetFullPath(fullPath).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        var marker = $"{Path.DirectorySeparatorChar}{InternalFolderName}{Path.DirectorySeparatorChar}";
+        return normalized.Contains(marker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly record struct FolderSnapshot(int FileCount, long LatestWriteUtcTicks);
 
     private static string EscapeCsv(string? value)
     {
