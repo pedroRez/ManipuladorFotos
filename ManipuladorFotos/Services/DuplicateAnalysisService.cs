@@ -15,85 +15,136 @@ public sealed class DuplicateAnalysisService
     {
         var candidates = new Dictionary<string, CandidateAccumulator>(StringComparer.OrdinalIgnoreCase);
 
-        AddExactHashSuggestions(items, candidates);
+        AddExactHashSuggestions(items, candidates, options);
 
         if (options.UseSameNameRule)
         {
-            AddSameNameSuggestions(items, candidates);
+            AddSameNameSuggestions(items, candidates, options);
         }
 
         if (options.UseSameSizeRule)
         {
-            AddSameSizeSuggestions(items, candidates);
+            AddSameSizeSuggestions(items, candidates, options);
         }
 
         if (options.UseSimilarInSequenceRule)
         {
-            AddSimilarSequenceSuggestions(items, candidates, options.SimilarSecondsWindow, options.SimilarDistanceThreshold);
+            AddSimilarSequenceSuggestions(items, candidates, options);
         }
 
         return candidates.Values
-            .Select(x => new DeletionCandidate
-            {
-                Item = x.Item,
-                Rule = string.Join(" | ", x.Rules.OrderBy(r => r)),
-                Reason = string.Join("; ", x.Reasons),
-                KeepFilePath = x.KeepFilePath
-            })
-            .OrderByDescending(x => x.CreationTime)
+            .Select(ToDeletionCandidate)
+            .OrderBy(x => x.GroupLabel)
+            .ThenBy(x => x.CanDelete) // original protegida primeiro no grupo
+            .ThenByDescending(x => x.CreationTime)
             .ThenBy(x => x.Name)
             .ToList();
     }
 
-    private void AddExactHashSuggestions(IReadOnlyCollection<MediaItem> items, IDictionary<string, CandidateAccumulator> candidates)
+    private void AddExactHashSuggestions(
+        IReadOnlyCollection<MediaItem> items,
+        IDictionary<string, CandidateAccumulator> candidates,
+        DuplicateAnalysisOptions options)
     {
         var groups = items
-            .Where(x => File.Exists(x.FullPath))
+            .Where(x => x.IsImage && File.Exists(x.FullPath))
             .GroupBy(GetSha256)
             .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() > 1);
 
         foreach (var group in groups)
         {
-            var ordered = group.OrderByDescending(ScoreKeeper).ToList();
+            var ordered = group.OrderByDescending(x => ScoreForKeep(x, options)).ToList();
             var keeper = ordered.First();
+            var groupLabel = $"Hash:{group.Key[..8]}";
+
+            AddKeeper(
+                candidates,
+                keeper,
+                groupLabel,
+                "Hash",
+                "Foto original mantida para garantir que o grupo não fique sem imagem.");
+
             foreach (var duplicate in ordered.Skip(1))
             {
-                AddCandidate(candidates, duplicate, keeper.FullPath, "Hash", "Duplicada por mesmo conteúdo (hash exato).");
+                AddDuplicate(
+                    candidates,
+                    duplicate,
+                    keeper.FullPath,
+                    groupLabel,
+                    "Hash",
+                    "Duplicada por mesmo conteúdo (hash exato).");
             }
         }
     }
 
-    private void AddSameNameSuggestions(IReadOnlyCollection<MediaItem> items, IDictionary<string, CandidateAccumulator> candidates)
+    private void AddSameNameSuggestions(
+        IReadOnlyCollection<MediaItem> items,
+        IDictionary<string, CandidateAccumulator> candidates,
+        DuplicateAnalysisOptions options)
     {
         var groups = items
+            .Where(x => x.IsImage)
             .GroupBy(x => $"{x.Name}|{x.Extension}", StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1);
 
         foreach (var group in groups)
         {
-            var ordered = group.OrderByDescending(ScoreKeeper).ToList();
+            var ordered = group.OrderByDescending(x => ScoreForKeep(x, options)).ToList();
             var keeper = ordered.First();
+            var groupLabel = $"Nome:{keeper.Name}{keeper.Extension}";
+
+            AddKeeper(
+                candidates,
+                keeper,
+                groupLabel,
+                "Nome",
+                "Foto original mantida no grupo por nome para evitar exclusão total.");
+
             foreach (var duplicate in ordered.Skip(1))
             {
-                AddCandidate(candidates, duplicate, keeper.FullPath, "Nome", "Possível duplicada por mesmo nome e extensão.");
+                AddDuplicate(
+                    candidates,
+                    duplicate,
+                    keeper.FullPath,
+                    groupLabel,
+                    "Nome",
+                    "Possível duplicada por mesmo nome e extensão.");
             }
         }
     }
 
-    private void AddSameSizeSuggestions(IReadOnlyCollection<MediaItem> items, IDictionary<string, CandidateAccumulator> candidates)
+    private void AddSameSizeSuggestions(
+        IReadOnlyCollection<MediaItem> items,
+        IDictionary<string, CandidateAccumulator> candidates,
+        DuplicateAnalysisOptions options)
     {
         var groups = items
-            .Where(x => x.SizeBytes > 0)
+            .Where(x => x.IsImage && x.SizeBytes > 0)
             .GroupBy(x => x.SizeBytes)
             .Where(g => g.Count() > 1);
 
         foreach (var group in groups)
         {
-            var ordered = group.OrderByDescending(ScoreKeeper).ToList();
+            var ordered = group.OrderByDescending(x => ScoreForKeep(x, options)).ToList();
             var keeper = ordered.First();
+            var groupLabel = $"Tam:{keeper.SizeLabel}";
+
+            AddKeeper(
+                candidates,
+                keeper,
+                groupLabel,
+                "Tamanho",
+                "Foto original mantida no grupo por tamanho para evitar exclusão total.");
+
             foreach (var duplicate in ordered.Skip(1))
             {
-                AddCandidate(candidates, duplicate, keeper.FullPath, "Tamanho", "Possível duplicada por mesmo tamanho (revisar com atenção).");
+                AddDuplicate(
+                    candidates,
+                    duplicate,
+                    keeper.FullPath,
+                    groupLabel,
+                    "Tamanho",
+                    "Possível duplicada por mesmo tamanho (revisar com atenção).");
             }
         }
     }
@@ -101,8 +152,7 @@ public sealed class DuplicateAnalysisService
     private void AddSimilarSequenceSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
-        int secondsWindow,
-        int distanceThreshold)
+        DuplicateAnalysisOptions options)
     {
         var photos = items
             .Where(x => x.IsImage && File.Exists(x.FullPath))
@@ -116,7 +166,7 @@ public sealed class DuplicateAnalysisService
             {
                 var right = photos[j];
                 var delta = (right.CreationTime - left.CreationTime).TotalSeconds;
-                if (delta > secondsWindow)
+                if (delta > options.SimilarSecondsWindow)
                 {
                     break;
                 }
@@ -129,43 +179,101 @@ public sealed class DuplicateAnalysisService
                 }
 
                 var distance = HammingDistance(leftHash, rightHash);
-                if (distance > distanceThreshold)
+                if (distance > options.SimilarDistanceThreshold)
                 {
                     continue;
                 }
 
-                var keeper = ScoreKeeper(left) >= ScoreKeeper(right) ? left : right;
+                var keeper = ScoreForKeep(left, options) >= ScoreForKeep(right, options) ? left : right;
                 var duplicate = keeper == left ? right : left;
-                AddCandidate(
+                var groupLabel = $"Seq:{keeper.CreationTime:yyyyMMdd-HHmmss}";
+
+                AddKeeper(
+                    candidates,
+                    keeper,
+                    groupLabel,
+                    "Semelhante",
+                    "Foto base protegida para manter pelo menos uma imagem da sequência.");
+
+                AddDuplicate(
                     candidates,
                     duplicate,
                     keeper.FullPath,
+                    groupLabel,
                     "Semelhante",
                     $"Foto semelhante na sequência ({delta:F0}s de diferença, distância {distance}).");
             }
         }
     }
 
-    private static double ScoreKeeper(MediaItem item)
+    private static double ScoreForKeep(MediaItem item, DuplicateAnalysisOptions options)
     {
-        return item.SizeBytes + item.LastWriteTime.Ticks * 0.0000001;
+        return options.KeepPreference switch
+        {
+            "Maior tamanho" => item.SizeBytes,
+            "Mais recente" => item.LastWriteTime.Ticks,
+            "Mais antiga" => -item.CreationTime.Ticks,
+            _ => item.ResolutionPixels * 1_000_000d + item.SizeBytes
+        };
     }
 
-    private static void AddCandidate(
+    private static void AddDuplicate(
         IDictionary<string, CandidateAccumulator> candidates,
         MediaItem item,
         string keepFilePath,
+        string groupLabel,
         string rule,
         string reason)
     {
+        var acc = GetOrCreate(candidates, item, keepFilePath);
+        acc.Rules.Add(rule);
+        acc.Reasons.Add(reason);
+        acc.GroupLabels.Add(groupLabel);
+    }
+
+    private static void AddKeeper(
+        IDictionary<string, CandidateAccumulator> candidates,
+        MediaItem item,
+        string groupLabel,
+        string rule,
+        string reason)
+    {
+        var acc = GetOrCreate(candidates, item, item.FullPath);
+        acc.CanDelete = false;
+        acc.Rules.Add($"{rule}-Original");
+        acc.Reasons.Add(reason);
+        acc.GroupLabels.Add(groupLabel);
+        acc.KeepFilePath = item.FullPath;
+    }
+
+    private static CandidateAccumulator GetOrCreate(
+        IDictionary<string, CandidateAccumulator> candidates,
+        MediaItem item,
+        string keepFilePath)
+    {
         if (!candidates.TryGetValue(item.FullPath, out var existing))
         {
-            candidates[item.FullPath] = new CandidateAccumulator(item, keepFilePath, rule, reason);
-            return;
+            existing = new CandidateAccumulator(item, keepFilePath);
+            candidates[item.FullPath] = existing;
         }
 
-        existing.Rules.Add(rule);
-        existing.Reasons.Add(reason);
+        return existing;
+    }
+
+    private static DeletionCandidate ToDeletionCandidate(CandidateAccumulator x)
+    {
+        var candidate = new DeletionCandidate
+        {
+            Item = x.Item,
+            Rule = string.Join(" | ", x.Rules.OrderBy(r => r)),
+            Reason = string.Join("; ", x.Reasons.Distinct()),
+            KeepFilePath = x.KeepFilePath,
+            GroupLabel = string.Join(" | ", x.GroupLabels.OrderBy(g => g)),
+            CanDelete = x.CanDelete
+        };
+
+        candidate.IsMarked = candidate.CanDelete;
+        return candidate;
     }
 
     private string GetSha256(MediaItem item)
@@ -250,17 +358,21 @@ public sealed class DuplicateAnalysisService
 
     private sealed class CandidateAccumulator
     {
-        public CandidateAccumulator(MediaItem item, string keepFilePath, string rule, string reason)
+        public CandidateAccumulator(MediaItem item, string keepFilePath)
         {
             Item = item;
             KeepFilePath = keepFilePath;
-            Rules = [rule];
-            Reasons = [reason];
+            CanDelete = true;
+            Rules = [];
+            Reasons = [];
+            GroupLabels = [];
         }
 
         public MediaItem Item { get; }
-        public string KeepFilePath { get; }
+        public string KeepFilePath { get; set; }
+        public bool CanDelete { get; set; }
         public HashSet<string> Rules { get; }
         public List<string> Reasons { get; }
+        public HashSet<string> GroupLabels { get; }
     }
 }

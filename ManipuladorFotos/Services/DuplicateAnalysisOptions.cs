@@ -7,4 +7,5 @@ public sealed class DuplicateAnalysisOptions
     public bool UseSimilarInSequenceRule { get; init; }
     public int SimilarSecondsWindow { get; init; } = 10;
     public int SimilarDistanceThreshold { get; init; } = 8;
+    public string KeepPreference { get; init; } = "Maior resolução";
 }

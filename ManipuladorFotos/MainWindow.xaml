@@ -76,7 +76,7 @@
                                Margin="0,4,0,0" />
                 </StackPanel>
                 <Border Width="10" />
-                <TextBlock Text="Fase 1: Interface + listagem + preview"
+                <TextBlock Text="Fase 2: Lista de exclusão com revisão visual"
                            VerticalAlignment="Bottom"
                            Foreground="#E8F1F5"
                            FontWeight="SemiBold"
@@ -305,6 +305,151 @@
                             </DataGrid.Columns>
                         </DataGrid>
                     </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Lista de Exclusão">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Background="{StaticResource CardBrush}"
+                            CornerRadius="12"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            Padding="10"
+                            Margin="0,0,0,10">
+                        <WrapPanel>
+                            <TextBlock Text="Regras:"
+                                       VerticalAlignment="Center"
+                                       Margin="4,8,6,0"
+                                       FontWeight="SemiBold" />
+                            <CheckBox Content="Mesmo nome"
+                                      IsChecked="{Binding UseSameNameRule}" />
+                            <CheckBox Content="Mesmo tamanho"
+                                      IsChecked="{Binding UseSameSizeRule}" />
+                            <CheckBox Content="Semelhantes em sequência"
+                                      IsChecked="{Binding UseSimilarInSequenceRule}" />
+
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="Janela (segundos)" FontSize="12" Margin="4,0,4,2" />
+                                <TextBox Width="120" Text="{Binding SimilarSecondsWindow, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+
+                            <StackPanel>
+                                <TextBlock Text="Distância similaridade" FontSize="12" Margin="4,0,4,2" />
+                                <TextBox Width="150" Text="{Binding SimilarDistanceThreshold, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+
+                            <StackPanel>
+                                <TextBlock Text="Preferência para manter" FontSize="12" Margin="4,0,4,2" />
+                                <ComboBox Width="170"
+                                          ItemsSource="{Binding KeepPreferenceOptions}"
+                                          SelectedItem="{Binding KeepPreference}" />
+                            </StackPanel>
+
+                            <Button Content="Gerar Lista de Exclusão"
+                                    Command="{Binding GenerateDeletionListCommand}"
+                                    Margin="14,20,4,4" />
+                            <Button Content="Marcar Todos"
+                                    Command="{Binding MarkAllDeletionCandidatesCommand}"
+                                    Margin="4,20,4,4" />
+                            <Button Content="Desmarcar Todos"
+                                    Command="{Binding UnmarkAllDeletionCandidatesCommand}"
+                                    Background="{StaticResource AccentBrush}"
+                                    Margin="4,20,4,4" />
+                            <Button Content="Excluir Marcados (Lixeira)"
+                                    Command="{Binding DeleteMarkedCandidatesCommand}"
+                                    Background="#B42318"
+                                    Margin="4,20,4,4" />
+                            <TextBlock Text="{Binding MarkedDeletionCount, StringFormat=Marcados: {0}}"
+                                       Margin="14,24,4,4"
+                                       VerticalAlignment="Center"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding MarkedDeletionSizeLabel, StringFormat=Espaço estimado: {0}}"
+                                       Margin="8,24,4,4"
+                                       VerticalAlignment="Center"
+                                       FontWeight="SemiBold" />
+                        </WrapPanel>
+                    </Border>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                Background="{StaticResource CardBrush}"
+                                CornerRadius="12"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Padding="8">
+                            <DataGrid ItemsSource="{Binding DeletionCandidates}"
+                                      SelectedItem="{Binding SelectedDeletionCandidate}"
+                                      AutoGenerateColumns="False"
+                                      GridLinesVisibility="Horizontal"
+                                      RowHeaderWidth="0">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CanDelete}" Value="False">
+                                                <Setter Property="Background" Value="#FFF7E7" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridCheckBoxColumn Header="Excluir" Binding="{Binding IsMarked}" Width="0.7*" />
+                                    <DataGridTextColumn Header="Nome" Binding="{Binding Name}" Width="1.5*" />
+                                    <DataGridTextColumn Header="Extensão" Binding="{Binding Extension}" Width="0.8*" />
+                                    <DataGridTextColumn Header="Tipo" Binding="{Binding Kind}" Width="0.8*" />
+                                    <DataGridTextColumn Header="Tamanho" Binding="{Binding SizeLabel}" Width="0.8*" />
+                                    <DataGridTextColumn Header="Resolução" Binding="{Binding Item.ResolutionLabel}" Width="0.9*" />
+                                    <DataGridTextColumn Header="Grupo" Binding="{Binding GroupLabel}" Width="1.6*" />
+                                    <DataGridTextColumn Header="Estado" Binding="{Binding DeletionStateLabel}" Width="1.1*" />
+                                    <DataGridTextColumn Header="Regra" Binding="{Binding Rule}" Width="1.2*" />
+                                    <DataGridTextColumn Header="Motivo" Binding="{Binding Reason}" Width="2.3*" />
+                                    <DataGridTextColumn Header="Manter (arquivo)" Binding="{Binding KeepFilePath}" Width="2.3*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                        <Border Grid.Column="2"
+                                Background="{StaticResource CardBrush}"
+                                CornerRadius="12"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Padding="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border CornerRadius="10"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        Padding="8"
+                                        Background="#F8FAFC">
+                                    <Image Source="{Binding DeletionPreviewImage}" Stretch="Uniform" />
+                                </Border>
+
+                                <StackPanel Grid.Row="1" Margin="0,10,0,0">
+                                    <TextBlock Text="Revisão antes da exclusão"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#2E3A46" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.Name, TargetNullValue=Selecione um item da lista}" Margin="0,6,0,0" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.Reason}" TextWrapping="Wrap" Foreground="#55606B" />
+                                    <TextBlock Text="{Binding SelectedDeletionCandidate.FullPath}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#55606B" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Grid>
             </TabItem>
         </TabControl>

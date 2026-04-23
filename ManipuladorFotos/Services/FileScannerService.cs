@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using System.Windows.Media.Imaging;
 using ManipuladorFotos.Models;
 
 namespace ManipuladorFotos.Services;
@@ -42,6 +43,7 @@ public sealed class FileScannerService
                 var info = new FileInfo(path);
                 var ext = info.Extension;
                 var kind = ResolveKind(ext);
+                var (width, height) = kind == MediaKind.Foto ? TryReadImageDimensions(info.FullName) : ((int?)null, (int?)null);
 
                 result.Add(new MediaItem
                 {
@@ -51,7 +53,9 @@ public sealed class FileScannerService
                     SizeBytes = info.Length,
                     CreationTime = info.CreationTime,
                     LastWriteTime = info.LastWriteTime,
-                    Kind = kind
+                    Kind = kind,
+                    Width = width,
+                    Height = height
                 });
             }
             catch
@@ -103,5 +107,25 @@ public sealed class FileScannerService
         }
 
         return MediaKind.Outro;
+    }
+
+    private static (int? Width, int? Height) TryReadImageDimensions(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            var frame = decoder.Frames.FirstOrDefault();
+            if (frame is null)
+            {
+                return (null, null);
+            }
+
+            return (frame.PixelWidth, frame.PixelHeight);
+        }
+        catch
+        {
+            return (null, null);
+        }
     }
 }

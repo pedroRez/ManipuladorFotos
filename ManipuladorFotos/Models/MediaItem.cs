@@ -14,6 +14,8 @@ public sealed class MediaItem : ObservableObject
     public required DateTime CreationTime { get; init; }
     public required DateTime LastWriteTime { get; init; }
     public required MediaKind Kind { get; init; }
+    public int? Width { get; init; }
+    public int? Height { get; init; }
 
     public string DirectoryPath => Path.GetDirectoryName(FullPath) ?? string.Empty;
 
@@ -26,6 +28,8 @@ public sealed class MediaItem : ObservableObject
     };
 
     public bool IsImage => Kind == MediaKind.Foto;
+    public long ResolutionPixels => (long)(Width ?? 0) * (Height ?? 0);
+    public string ResolutionLabel => Width.HasValue && Height.HasValue ? $"{Width}x{Height}" : "-";
 
     public bool IsMarked
     {

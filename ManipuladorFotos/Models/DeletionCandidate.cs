@@ -4,12 +4,14 @@ namespace ManipuladorFotos.Models;
 
 public sealed class DeletionCandidate : ObservableObject
 {
-    private bool _isMarked = true;
+    private bool _isMarked;
 
     public required MediaItem Item { get; init; }
     public required string Reason { get; init; }
     public required string Rule { get; init; }
     public required string KeepFilePath { get; init; }
+    public required string GroupLabel { get; init; }
+    public required bool CanDelete { get; init; }
 
     public string Name => Item.Name;
     public string Extension => Item.Extension;
@@ -17,6 +19,7 @@ public sealed class DeletionCandidate : ObservableObject
     public string SizeLabel => Item.SizeLabel;
     public DateTime CreationTime => Item.CreationTime;
     public string Kind => Item.Kind.ToString();
+    public string DeletionStateLabel => CanDelete ? "Candidato" : "Original protegida";
 
     public bool IsMarked
     {
