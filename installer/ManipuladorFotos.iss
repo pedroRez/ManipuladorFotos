@@ -1,5 +1,5 @@
 ﻿#define MyAppName "ManipuladorFotos"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "pedroRez"
 #define MyAppExeName "ManipuladorFotos.exe"
 #define MyAppId "2D22B0B7-8C0D-4D65-9A63-A2D04C72AF72"
@@ -30,7 +30,7 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\\BrazilianPortugu
 Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
 
 [Files]
-Source: "..\artifacts\publish\win-x64\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\artifacts\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
 Source: "{#MyAppIcon}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
