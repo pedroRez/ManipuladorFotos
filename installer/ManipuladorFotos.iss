@@ -1,5 +1,5 @@
 ﻿#define MyAppName "ManipuladorFotos"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "pedroRez"
 #define MyAppExeName "ManipuladorFotos.exe"
 #define MyAppId "2D22B0B7-8C0D-4D65-9A63-A2D04C72AF72"
