@@ -12,7 +12,7 @@ public sealed class FileScannerService
 
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".heic"
+        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".heic", ".heif"
     };
 
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -51,9 +51,9 @@ public sealed class FileScannerService
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
-            return [];
+            throw new IOException($"Falha ao enumerar arquivos em '{folderPath}': {ex.Message}", ex);
         }
 
         var total = files.Count;

@@ -41,8 +41,15 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _focusedReviewNextCommand;
     private readonly RelayCommand _focusedReviewKeepCommand;
     private readonly RelayCommand _focusedReviewDeleteCommand;
+    private readonly RelayCommand _showDeletionExplanationCommand;
     private readonly RelayCommand _undoLastOperationCommand;
     private readonly RelayCommand _undoSelectedOperationCommand;
+    private readonly RelayCommand _toggleOrganizeModeCommand;
+    private readonly RelayCommand _organizeSimpleNextStepCommand;
+    private readonly RelayCommand _organizeSimplePreviousStepCommand;
+    private readonly RelayCommand _executeSimpleOrganizeActionCommand;
+    private readonly RelayCommand _toggleAdvancedOrganizeOptionsCommand;
+    private readonly RelayCommand _toggleOrganizeAssistantVisibilityCommand;
 
     private List<MediaItem> _allItems = [];
     private bool _isBusy;
@@ -84,6 +91,11 @@ public sealed class MainViewModel : ObservableObject
     private string _dateOrganizationMode = "Ano/Mês";
     private bool _flattenSubfoldersByDate;
     private string _dateOrganizationBaseFolder = "OrganizadoPorData";
+    private bool _isSimpleOrganizeMode = true;
+    private int _organizeSimpleStep = 1;
+    private string _selectedSimpleOrganizeAction = "Separar fotos e vídeos em pastas";
+    private bool _isAdvancedOrganizeOptionsOpen;
+    private bool _isOrganizeAssistantVisible = true;
     private bool _compareModeEnabled;
     private bool _isFocusedReviewMode;
     private List<DeletionCandidate> _focusedReviewItems = [];
@@ -96,6 +108,7 @@ public sealed class MainViewModel : ObservableObject
     private long _lastScanLatestWriteUtcTicks = -1;
     private CancellationTokenSource? _selectedItemPreviewCts;
     private CancellationTokenSource? _deletionPreviewCts;
+    private string _lastHeicCodecWarningPath = string.Empty;
     private const int PreviewDecodePixelWidth = 1920;
     private const int PreviewDebounceMs = 120;
     private const string InternalFolderName = ".manipuladorfotos";
@@ -111,6 +124,7 @@ public sealed class MainViewModel : ObservableObject
         CleanupModes = ["Conservador", "Balanceado", "Agressivo"];
         MediaOrganizationModes = ["Separar Fotos e Vídeos", "Unificar Fotos e Vídeos", "Extrair Somente Vídeos"];
         DeletionApplyTypeOptions = ["Todos", "Somente Fotos", "Somente Vídeos"];
+        SimpleOrganizeActions = ["Separar fotos e vídeos em pastas", "Juntar tudo em uma pasta", "Extrair apenas vídeos", "Organizar fotos por data", "Mover fotos marcadas"];
 
         BrowseFolderCommand = new RelayCommand(BrowseFolder);
         _scanFilesCommand = new RelayCommand(() => _ = ScanFilesAsync(), () => !IsBusy);
@@ -136,8 +150,15 @@ public sealed class MainViewModel : ObservableObject
         _focusedReviewNextCommand = new RelayCommand(() => MoveFocusedReview(1), () => IsFocusedReviewMode && _focusedReviewItems.Count > 0);
         _focusedReviewKeepCommand = new RelayCommand(() => SetFocusedReviewMark(false), () => IsFocusedReviewMode && CurrentFocusedReviewCandidate is not null);
         _focusedReviewDeleteCommand = new RelayCommand(() => SetFocusedReviewMark(true), () => IsFocusedReviewMode && CurrentFocusedReviewCandidate is not null);
+        _showDeletionExplanationCommand = new RelayCommand(ShowDeletionExplanation);
         _undoLastOperationCommand = new RelayCommand(() => _ = UndoLastOperationAsync(), () => !IsBusy && _undoBatches.Count > 0);
         _undoSelectedOperationCommand = new RelayCommand(() => _ = UndoSelectedOperationAsync(), () => !IsBusy && !string.IsNullOrWhiteSpace(SelectedUndoBatchId));
+        _toggleOrganizeModeCommand = new RelayCommand(ToggleOrganizeMode, () => !IsBusy);
+        _organizeSimpleNextStepCommand = new RelayCommand(AdvanceSimpleOrganizeStep, () => !IsBusy && OrganizeSimpleStep < 3);
+        _organizeSimplePreviousStepCommand = new RelayCommand(RewindSimpleOrganizeStep, () => !IsBusy && OrganizeSimpleStep > 1);
+        _executeSimpleOrganizeActionCommand = new RelayCommand(() => _ = ExecuteSimpleOrganizeActionAsync(), () => !IsBusy && IsSimpleOrganizeMode && OrganizeSimpleStep == 3);
+        _toggleAdvancedOrganizeOptionsCommand = new RelayCommand(() => IsAdvancedOrganizeOptionsOpen = !IsAdvancedOrganizeOptionsOpen, () => !IsBusy && !IsSimpleOrganizeMode);
+        _toggleOrganizeAssistantVisibilityCommand = new RelayCommand(() => IsOrganizeAssistantVisible = !IsOrganizeAssistantVisible, () => !IsBusy && IsSimpleOrganizeMode);
 
         ScanFilesCommand = _scanFilesCommand;
         ApplyFiltersCommand = new RelayCommand(ApplyFilters);
@@ -166,8 +187,15 @@ public sealed class MainViewModel : ObservableObject
         FocusedReviewNextCommand = _focusedReviewNextCommand;
         FocusedReviewKeepCommand = _focusedReviewKeepCommand;
         FocusedReviewDeleteCommand = _focusedReviewDeleteCommand;
+        ShowDeletionExplanationCommand = _showDeletionExplanationCommand;
         UndoLastOperationCommand = _undoLastOperationCommand;
         UndoSelectedOperationCommand = _undoSelectedOperationCommand;
+        ToggleOrganizeModeCommand = _toggleOrganizeModeCommand;
+        OrganizeSimpleNextStepCommand = _organizeSimpleNextStepCommand;
+        OrganizeSimplePreviousStepCommand = _organizeSimplePreviousStepCommand;
+        ExecuteSimpleOrganizeActionCommand = _executeSimpleOrganizeActionCommand;
+        ToggleAdvancedOrganizeOptionsCommand = _toggleAdvancedOrganizeOptionsCommand;
+        ToggleOrganizeAssistantVisibilityCommand = _toggleOrganizeAssistantVisibilityCommand;
 
         _undoBatches = _undoHistoryService.Load();
         RefreshUndoSelection();
@@ -184,6 +212,7 @@ public sealed class MainViewModel : ObservableObject
     public IReadOnlyList<string> CleanupModes { get; }
     public IReadOnlyList<string> MediaOrganizationModes { get; }
     public IReadOnlyList<string> DeletionApplyTypeOptions { get; }
+    public IReadOnlyList<string> SimpleOrganizeActions { get; }
 
     public RelayCommand BrowseFolderCommand { get; }
     public RelayCommand ScanFilesCommand { get; }
@@ -213,8 +242,15 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand FocusedReviewNextCommand { get; }
     public RelayCommand FocusedReviewKeepCommand { get; }
     public RelayCommand FocusedReviewDeleteCommand { get; }
+    public RelayCommand ShowDeletionExplanationCommand { get; }
     public RelayCommand UndoLastOperationCommand { get; }
     public RelayCommand UndoSelectedOperationCommand { get; }
+    public RelayCommand ToggleOrganizeModeCommand { get; }
+    public RelayCommand OrganizeSimpleNextStepCommand { get; }
+    public RelayCommand OrganizeSimplePreviousStepCommand { get; }
+    public RelayCommand ExecuteSimpleOrganizeActionCommand { get; }
+    public RelayCommand ToggleAdvancedOrganizeOptionsCommand { get; }
+    public RelayCommand ToggleOrganizeAssistantVisibilityCommand { get; }
 
     public IReadOnlyList<UndoBatch> UndoBatchOptions => _undoBatches
         .OrderByDescending(x => x.CreatedAt)
@@ -241,7 +277,13 @@ public sealed class MainViewModel : ObservableObject
     public bool IncludeSubfolders
     {
         get => _includeSubfolders;
-        set => SetProperty(ref _includeSubfolders, value);
+        set
+        {
+            if (SetProperty(ref _includeSubfolders, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
 
     public string NameFilter
@@ -466,7 +508,13 @@ public sealed class MainViewModel : ObservableObject
     public string NewMoveFolderPath
     {
         get => _newMoveFolderPath;
-        set => SetProperty(ref _newMoveFolderPath, value);
+        set
+        {
+            if (SetProperty(ref _newMoveFolderPath, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
 
     public bool IsDryRun => false;
@@ -474,20 +522,177 @@ public sealed class MainViewModel : ObservableObject
     public string DateOrganizationMode
     {
         get => _dateOrganizationMode;
-        set => SetProperty(ref _dateOrganizationMode, value);
+        set
+        {
+            if (SetProperty(ref _dateOrganizationMode, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
 
     public bool FlattenSubfoldersByDate
     {
         get => _flattenSubfoldersByDate;
-        set => SetProperty(ref _flattenSubfoldersByDate, value);
+        set
+        {
+            if (SetProperty(ref _flattenSubfoldersByDate, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
 
     public string DateOrganizationBaseFolder
     {
         get => _dateOrganizationBaseFolder;
-        set => SetProperty(ref _dateOrganizationBaseFolder, value);
+        set
+        {
+            if (SetProperty(ref _dateOrganizationBaseFolder, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
+
+    public bool IsSimpleOrganizeMode
+    {
+        get => _isSimpleOrganizeMode;
+        set
+        {
+            if (!SetProperty(ref _isSimpleOrganizeMode, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsAdvancedOrganizeMode));
+            OnPropertyChanged(nameof(OrganizeModeToggleLabel));
+            OnPropertyChanged(nameof(OrganizeAssistantToggleLabel));
+            OnPropertyChanged(nameof(IsSimpleAssistPanelVisible));
+            OnPropertyChanged(nameof(IsSimpleAssistHintVisible));
+            RaiseCommandStates();
+        }
+    }
+
+    public bool IsAdvancedOrganizeMode => !IsSimpleOrganizeMode;
+    public bool IsSimpleAssistPanelVisible => IsSimpleOrganizeMode && IsOrganizeAssistantVisible;
+    public bool IsSimpleAssistHintVisible => IsSimpleOrganizeMode && !IsOrganizeAssistantVisible;
+
+    public string OrganizeModeToggleLabel => IsSimpleOrganizeMode ? "Abrir modo avançado" : "Voltar para modo guiado";
+
+    public int OrganizeSimpleStep
+    {
+        get => _organizeSimpleStep;
+        set
+        {
+            var next = Math.Clamp(value, 1, 3);
+            if (!SetProperty(ref _organizeSimpleStep, next))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsSimpleStep1));
+            OnPropertyChanged(nameof(IsSimpleStep2));
+            OnPropertyChanged(nameof(IsSimpleStep3));
+            OnPropertyChanged(nameof(OrganizeSimpleStepLabel));
+            OnPropertyChanged(nameof(OrganizeSimpleStepTitle));
+            RaiseCommandStates();
+        }
+    }
+
+    public bool IsSimpleStep1 => OrganizeSimpleStep == 1;
+    public bool IsSimpleStep2 => OrganizeSimpleStep == 2;
+    public bool IsSimpleStep3 => OrganizeSimpleStep == 3;
+
+    public string OrganizeSimpleStepLabel => $"Etapa {OrganizeSimpleStep}/3";
+
+    public string OrganizeSimpleStepTitle => OrganizeSimpleStep switch
+    {
+        1 => "Escolha o que fazer",
+        2 => "Ajuste rápido",
+        _ => "Confirmar execução"
+    };
+
+    public string SelectedSimpleOrganizeAction
+    {
+        get => _selectedSimpleOrganizeAction;
+        set
+        {
+            if (!SetProperty(ref _selectedSimpleOrganizeAction, value))
+            {
+                return;
+            }
+
+            SyncSimpleActionToOperationMode();
+            OnPropertyChanged(nameof(IsSimpleMediaAction));
+            OnPropertyChanged(nameof(IsSimpleDateAction));
+            OnPropertyChanged(nameof(IsSimpleMoveAction));
+            OnPropertyChanged(nameof(SimpleMediaNeedsFolderName));
+            OnPropertyChanged(nameof(SimpleOrganizeSummary));
+        }
+    }
+
+    public bool IsSimpleMediaAction => SelectedSimpleOrganizeAction is "Separar fotos e vídeos em pastas" or "Juntar tudo em uma pasta" or "Extrair apenas vídeos";
+    public bool IsSimpleDateAction => SelectedSimpleOrganizeAction == "Organizar fotos por data";
+    public bool IsSimpleMoveAction => SelectedSimpleOrganizeAction == "Mover fotos marcadas";
+    public bool SimpleMediaNeedsFolderName => SelectedSimpleOrganizeAction is "Juntar tudo em uma pasta" or "Extrair apenas vídeos";
+
+    public string SimpleOrganizeSummary
+    {
+        get
+        {
+            if (IsSimpleMediaAction)
+            {
+                var scope = IncludeSubfolders ? "incluindo subpastas" : "somente a pasta principal";
+                var folderPart = SimpleMediaNeedsFolderName
+                    ? $" Pasta de destino: {MediaOperationFolderName}."
+                    : string.Empty;
+                return $"Você vai: {SelectedSimpleOrganizeAction}. Escopo: {scope}.{folderPart}";
+            }
+
+            if (IsSimpleDateAction)
+            {
+                var basePart = FlattenSubfoldersByDate ? $" Pasta base: {DateOrganizationBaseFolder}." : " Mantendo estrutura por pasta de origem.";
+                return $"Você vai: Organizar fotos por data ({DateOrganizationMode}).{basePart}";
+            }
+
+            return $"Você vai: mover fotos marcadas. Destino: {NewMoveFolderPath}.";
+        }
+    }
+
+    public bool IsAdvancedOrganizeOptionsOpen
+    {
+        get => _isAdvancedOrganizeOptionsOpen;
+        set
+        {
+            if (SetProperty(ref _isAdvancedOrganizeOptionsOpen, value))
+            {
+                OnPropertyChanged(nameof(AdvancedOrganizeOptionsToggleLabel));
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public string AdvancedOrganizeOptionsToggleLabel => IsAdvancedOrganizeOptionsOpen ? "Ocultar opções avançadas" : "Mostrar opções avançadas";
+
+    public bool IsOrganizeAssistantVisible
+    {
+        get => _isOrganizeAssistantVisible;
+        set
+        {
+            if (!SetProperty(ref _isOrganizeAssistantVisible, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(OrganizeAssistantToggleLabel));
+            OnPropertyChanged(nameof(IsSimpleAssistPanelVisible));
+            OnPropertyChanged(nameof(IsSimpleAssistHintVisible));
+            RaiseCommandStates();
+        }
+    }
+
+    public string OrganizeAssistantToggleLabel => IsOrganizeAssistantVisible ? "Focar na visualização" : "Mostrar assistente";
 
     public string CleanupMode
     {
@@ -498,19 +703,95 @@ public sealed class MainViewModel : ObservableObject
     public string MediaOrganizationMode
     {
         get => _mediaOrganizationMode;
-        set => SetProperty(ref _mediaOrganizationMode, value);
+        set
+        {
+            if (SetProperty(ref _mediaOrganizationMode, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
 
     public string MediaOperationFolderName
     {
         get => _mediaOperationFolderName;
-        set => SetProperty(ref _mediaOperationFolderName, value);
+        set
+        {
+            if (SetProperty(ref _mediaOperationFolderName, value))
+            {
+                OnPropertyChanged(nameof(SimpleOrganizeSummary));
+            }
+        }
     }
 
     public string DeletionApplyType
     {
         get => _deletionApplyType;
         set => SetProperty(ref _deletionApplyType, value);
+    }
+
+    private void ToggleOrganizeMode()
+    {
+        IsSimpleOrganizeMode = !IsSimpleOrganizeMode;
+        if (IsSimpleOrganizeMode)
+        {
+            OrganizeSimpleStep = 1;
+            IsOrganizeAssistantVisible = true;
+            StatusMessage = "Modo guiado ativado: siga as etapas para organizar.";
+            return;
+        }
+
+        IsAdvancedOrganizeOptionsOpen = false;
+        IsOrganizeAssistantVisible = true;
+        StatusMessage = "Modo avançado ativado.";
+    }
+
+    private void AdvanceSimpleOrganizeStep()
+    {
+        OrganizeSimpleStep++;
+    }
+
+    private void RewindSimpleOrganizeStep()
+    {
+        OrganizeSimpleStep--;
+    }
+
+    private void SyncSimpleActionToOperationMode()
+    {
+        if (SelectedSimpleOrganizeAction == "Separar fotos e vídeos em pastas")
+        {
+            MediaOrganizationMode = "Separar Fotos e Vídeos";
+            return;
+        }
+
+        if (SelectedSimpleOrganizeAction == "Juntar tudo em uma pasta")
+        {
+            MediaOrganizationMode = "Unificar Fotos e Vídeos";
+            return;
+        }
+
+        if (SelectedSimpleOrganizeAction == "Extrair apenas vídeos")
+        {
+            MediaOrganizationMode = "Extrair Somente Vídeos";
+        }
+    }
+
+    private async Task ExecuteSimpleOrganizeActionAsync()
+    {
+        SyncSimpleActionToOperationMode();
+
+        switch (SelectedSimpleOrganizeAction)
+        {
+            case "Organizar fotos por data":
+                await OrganizePhotosByDateAsync();
+                break;
+            case "Mover fotos marcadas":
+                await MoveMarkedPhotosAsync();
+                break;
+            default:
+                await SeparateMediaAsync();
+                break;
+        }
     }
 
     private void BrowseFolder()
@@ -746,6 +1027,7 @@ public sealed class MainViewModel : ObservableObject
 
         var deleted = 0;
         var failed = 0;
+        string? firstErrorMessage = null;
         var logLines = new ConcurrentBag<string>();
         var undoBatch = CreateUndoBatch($"Exclusão lista ({marked.Count} arquivos)");
         var deletedPathsMap = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
@@ -801,9 +1083,10 @@ public sealed class MainViewModel : ObservableObject
                             logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_DELETE_CANDIDATE" : "DELETE_CANDIDATE")} | {candidate.FullPath}");
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         Interlocked.Increment(ref failed);
+                        Interlocked.CompareExchange(ref firstErrorMessage, ex.Message, null);
                     }
                     finally
                     {
@@ -845,7 +1128,8 @@ public sealed class MainViewModel : ObservableObject
 
             UpdateMarkedDeletionSummary();
             WriteOperationLog(logLines.ToList());
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")}. Processados: {deleted}. Falhas: {failed}.";
+            var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")}. Processados: {deleted}. Falhas: {failed}.{errorSuffix}";
         }
         catch (OperationCanceledException)
         {
@@ -900,6 +1184,7 @@ public sealed class MainViewModel : ObservableObject
         var cts = BeginOperation("Movendo fotos selecionadas...", false);
         var moved = 0;
         var failed = 0;
+        string? firstErrorMessage = null;
         var logLines = new List<string>();
         var movedSourcePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var undoBatch = CreateUndoBatch($"Movimentação manual ({markedPhotos.Count} fotos)");
@@ -922,7 +1207,6 @@ public sealed class MainViewModel : ObservableObject
                     {
                         if (!File.Exists(photo.FullPath))
                         {
-                            processed++;
                             continue;
                         }
 
@@ -942,9 +1226,10 @@ public sealed class MainViewModel : ObservableObject
                         moved++;
                         logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_MOVE_PHOTO" : "MOVE_PHOTO")} | {photo.FullPath} => {targetPath}");
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         failed++;
+                        firstErrorMessage ??= ex.Message;
                     }
                     finally
                     {
@@ -967,7 +1252,8 @@ public sealed class MainViewModel : ObservableObject
             }
 
             WriteOperationLog(logLines);
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Movimentação concluída")}. Movidas: {moved}. Falhas: {failed}.";
+            var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Movimentação concluída")}. Movidas: {moved}. Falhas: {failed}.{errorSuffix}";
         }
         catch (OperationCanceledException)
         {
@@ -1006,6 +1292,7 @@ public sealed class MainViewModel : ObservableObject
         var cts = BeginOperation("Processando arquivos indesejados...", false);
         var deleted = 0;
         var failed = 0;
+        string? firstErrorMessage = null;
         var total = marked.Count;
         var logLines = new ConcurrentBag<string>();
         var deletedPathsMap = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
@@ -1060,9 +1347,10 @@ public sealed class MainViewModel : ObservableObject
                             logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_DELETE_UNWANTED" : "DELETE_UNWANTED")} | {item.FullPath}");
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         Interlocked.Increment(ref failed);
+                        Interlocked.CompareExchange(ref firstErrorMessage, ex.Message, null);
                     }
                     finally
                     {
@@ -1091,7 +1379,8 @@ public sealed class MainViewModel : ObservableObject
             }
 
             WriteOperationLog(logLines.ToList());
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")} em indesejados. Processados: {deleted}. Falhas: {failed}.";
+            var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")} em indesejados. Processados: {deleted}. Falhas: {failed}.{errorSuffix}";
         }
         catch (OperationCanceledException)
         {
@@ -1196,6 +1485,7 @@ public sealed class MainViewModel : ObservableObject
         var cts = BeginOperation($"{operationLabel} de mídia...", false);
         var moved = 0;
         var failed = 0;
+        string? firstErrorMessage = null;
         var logLines = new List<string>();
         var movedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var undoBatch = CreateUndoBatch($"{selectedMode} ({itemsToProcess.Count} arquivos)");
@@ -1225,9 +1515,9 @@ public sealed class MainViewModel : ObservableObject
                     try
                     {
                         var destinationRoot = resolveDestinationRoot(item);
-                        var localFolderName = item.Kind == MediaKind.Foto ? "Fotos" : "Videos";
-                        var sourceDirName = Path.GetFileName(item.DirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                        if (string.Equals(sourceDirName, localFolderName, StringComparison.OrdinalIgnoreCase))
+                        var sourceDirFull = Path.GetFullPath(item.DirectoryPath);
+                        var destinationRootFull = Path.GetFullPath(destinationRoot);
+                        if (sourceDirFull.Equals(destinationRootFull, StringComparison.OrdinalIgnoreCase))
                         {
                             continue;
                         }
@@ -1257,9 +1547,10 @@ public sealed class MainViewModel : ObservableObject
                         moved++;
                         logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_ORGANIZE_MEDIA" : "ORGANIZE_MEDIA")} | Modo:{selectedMode} | {item.FullPath} => {targetPath}");
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         failed++;
+                        firstErrorMessage ??= ex.Message;
                     }
                     finally
                     {
@@ -1281,7 +1572,8 @@ public sealed class MainViewModel : ObservableObject
             }
 
             WriteOperationLog(logLines);
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : $"{operationLabel} concluída")}. Processados: {moved}. Falhas: {failed}.";
+            var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : $"{operationLabel} concluída")}. Processados: {moved}. Falhas: {failed}.{errorSuffix}";
         }
         catch (OperationCanceledException)
         {
@@ -1323,6 +1615,7 @@ public sealed class MainViewModel : ObservableObject
         var cts = BeginOperation("Organizando fotos por data...", false);
         var moved = 0;
         var failed = 0;
+        string? firstErrorMessage = null;
         var logLines = new List<string>();
         var shouldRefreshAfter = false;
         var undoBatch = CreateUndoBatch($"Organizar por data ({photos.Count} fotos)");
@@ -1360,7 +1653,6 @@ public sealed class MainViewModel : ObservableObject
                         var targetFull = Path.GetFullPath(targetPath);
                         if (sourceFull.Equals(targetFull, StringComparison.OrdinalIgnoreCase))
                         {
-                            processed++;
                             continue;
                         }
 
@@ -1378,9 +1670,10 @@ public sealed class MainViewModel : ObservableObject
                         moved++;
                         logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_ORGANIZE_BY_DATE" : "ORGANIZE_BY_DATE")} | {photo.FullPath} => {targetPath}");
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         failed++;
+                        firstErrorMessage ??= ex.Message;
                     }
                     finally
                     {
@@ -1396,7 +1689,8 @@ public sealed class MainViewModel : ObservableObject
             {
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Organização concluída")} por data. Processados: {moved}. Falhas: {failed}.";
+            var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Organização concluída")} por data. Processados: {moved}. Falhas: {failed}.{errorSuffix}";
             shouldRefreshAfter = !IsDryRun;
         }
         catch (OperationCanceledException)
@@ -1521,11 +1815,19 @@ public sealed class MainViewModel : ObservableObject
 
     private void ExitFocusedReviewMode()
     {
+        ExitFocusedReviewMode(false);
+    }
+
+    private void ExitFocusedReviewMode(bool silent)
+    {
         IsFocusedReviewMode = false;
         _focusedReviewItems = [];
         _focusedReviewIndex = -1;
         OnPropertyChanged(nameof(FocusedReviewProgressLabel));
-        StatusMessage = "Modo revisão focada finalizado.";
+        if (!silent)
+        {
+            StatusMessage = "Modo revisão focada finalizado.";
+        }
         RaiseCommandStates();
     }
 
@@ -1669,6 +1971,35 @@ public sealed class MainViewModel : ObservableObject
         StatusMessage = "Seleção automática aplicada por conjunto: 1 mantida e restantes marcadas.";
     }
 
+    private void ShowDeletionExplanation()
+    {
+        var candidate = SelectedDeletionCandidate;
+        if (candidate is null)
+        {
+            System.Windows.MessageBox.Show(
+                "Selecione um item da lista para visualizar a explicação.",
+                "Explicação",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        var text = new StringBuilder();
+        text.AppendLine($"Nome: {candidate.Name}{candidate.Extension}");
+        text.AppendLine($"Estado: {candidate.DeletionStateLabel}");
+        text.AppendLine($"Similaridade: {candidate.SimilarityLabel}");
+        text.AppendLine($"Regra: {candidate.Rule}");
+        text.AppendLine($"Motivo: {candidate.Reason}");
+        text.AppendLine($"Arquivo manter: {candidate.KeepFilePath}");
+        text.AppendLine($"Caminho: {candidate.FullPath}");
+
+        System.Windows.MessageBox.Show(
+            text.ToString(),
+            "Explicação",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Information);
+    }
+
     private void CandidateOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(DeletionCandidate.IsMarked))
@@ -1760,6 +2091,7 @@ public sealed class MainViewModel : ObservableObject
             }
 
             PreviewImage = image;
+            MaybeNotifyHeicCodecMissing(item?.FullPath, image);
         }
         catch (OperationCanceledException)
         {
@@ -1794,11 +2126,29 @@ public sealed class MainViewModel : ObservableObject
 
             DeletionPreviewImage = selectedTask.Result;
             KeepDeletionPreviewImage = keepTask.Result;
+            MaybeNotifyHeicCodecMissing(selectedPath, DeletionPreviewImage);
         }
         catch (OperationCanceledException)
         {
             // seleção mudou: ignora
         }
+    }
+
+    private void MaybeNotifyHeicCodecMissing(string? path, BitmapImage? loadedImage)
+    {
+        if (loadedImage is not null || !IsHeicLikePath(path))
+        {
+            return;
+        }
+
+        var normalized = Path.GetFullPath(path!);
+        if (string.Equals(_lastHeicCodecWarningPath, normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _lastHeicCodecWarningPath = normalized;
+        StatusMessage = "Não foi possível visualizar HEIC/HEIF. Instale no Windows: 'HEIF Image Extensions' (e, se necessário, 'HEVC Video Extensions').";
     }
 
     private static BitmapImage? LoadPreviewImage(string? path, bool canLoad, CancellationToken cancellationToken)
@@ -1856,7 +2206,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void ClearDeletionCandidates()
     {
-        ExitFocusedReviewMode();
+        ExitFocusedReviewMode(silent: true);
         CancelPreviewLoad(ref _deletionPreviewCts);
         foreach (var item in DeletionCandidates)
         {
@@ -1893,7 +2243,7 @@ public sealed class MainViewModel : ObservableObject
 
             if (_focusedReviewItems.Count == 0)
             {
-                ExitFocusedReviewMode();
+                ExitFocusedReviewMode(silent: true);
             }
             else
             {
@@ -2060,6 +2410,12 @@ public sealed class MainViewModel : ObservableObject
         _focusedReviewDeleteCommand.RaiseCanExecuteChanged();
         _undoLastOperationCommand.RaiseCanExecuteChanged();
         _undoSelectedOperationCommand.RaiseCanExecuteChanged();
+        _toggleOrganizeModeCommand.RaiseCanExecuteChanged();
+        _organizeSimpleNextStepCommand.RaiseCanExecuteChanged();
+        _organizeSimplePreviousStepCommand.RaiseCanExecuteChanged();
+        _executeSimpleOrganizeActionCommand.RaiseCanExecuteChanged();
+        _toggleAdvancedOrganizeOptionsCommand.RaiseCanExecuteChanged();
+        _toggleOrganizeAssistantVisibilityCommand.RaiseCanExecuteChanged();
         _cancelCurrentOperationCommand.RaiseCanExecuteChanged();
         MarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
         UnmarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
@@ -2467,5 +2823,17 @@ public sealed class MainViewModel : ObservableObject
             "Somente Vídeos" => kind == MediaKind.Video,
             _ => true
         };
+    }
+
+    private static bool IsHeicLikePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var ext = Path.GetExtension(path);
+        return ext.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase);
     }
 }
