@@ -20,6 +20,10 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly RelayCommand _scanFilesCommand;
     private readonly RelayCommand _scanUnwantedCommand;
+    private readonly RelayCommand _markAllDisplayedItemsCommand;
+    private readonly RelayCommand _unmarkAllDisplayedItemsCommand;
+    private readonly RelayCommand _markAllUnwantedItemsCommand;
+    private readonly RelayCommand _unmarkAllUnwantedItemsCommand;
     private readonly RelayCommand _generateDeletionListCommand;
     private readonly RelayCommand _deleteMarkedCandidatesCommand;
     private readonly RelayCommand _cancelCurrentOperationCommand;
@@ -31,6 +35,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _exportDeletionListTxtCommand;
     private readonly RelayCommand _applyCleanupModeCommand;
     private readonly RelayCommand _autoSelectByGroupCommand;
+    private readonly RelayCommand _startFocusedReviewCommand;
+    private readonly RelayCommand _exitFocusedReviewCommand;
+    private readonly RelayCommand _focusedReviewPreviousCommand;
+    private readonly RelayCommand _focusedReviewNextCommand;
+    private readonly RelayCommand _focusedReviewKeepCommand;
+    private readonly RelayCommand _focusedReviewDeleteCommand;
     private readonly RelayCommand _undoLastOperationCommand;
     private readonly RelayCommand _undoSelectedOperationCommand;
 
@@ -68,16 +78,26 @@ public sealed class MainViewModel : ObservableObject
     private string _operationProgressLabel = string.Empty;
     private string _newMoveFolderPath = "Selecionadas";
     private string _cleanupMode = "Balanceado";
+    private string _mediaOrganizationMode = "Separar Fotos e Vídeos";
+    private string _mediaOperationFolderName = "MidiaUnificada";
+    private string _deletionApplyType = "Todos";
     private string _dateOrganizationMode = "Ano/Mês";
     private bool _flattenSubfoldersByDate;
     private string _dateOrganizationBaseFolder = "OrganizadoPorData";
     private bool _compareModeEnabled;
+    private bool _isFocusedReviewMode;
+    private List<DeletionCandidate> _focusedReviewItems = [];
+    private int _focusedReviewIndex = -1;
     private List<UndoBatch> _undoBatches = [];
     private string? _selectedUndoBatchId;
     private string _lastScanFolder = string.Empty;
     private bool _lastScanIncludeSubfolders;
     private int _lastScanFileCount = -1;
     private long _lastScanLatestWriteUtcTicks = -1;
+    private CancellationTokenSource? _selectedItemPreviewCts;
+    private CancellationTokenSource? _deletionPreviewCts;
+    private const int PreviewDecodePixelWidth = 1920;
+    private const int PreviewDebounceMs = 120;
     private const string InternalFolderName = ".manipuladorfotos";
 
     public MainViewModel()
@@ -89,10 +109,16 @@ public sealed class MainViewModel : ObservableObject
         KeepPreferenceOptions = ["Maior resolução", "Maior tamanho", "Mais recente", "Mais antiga"];
         DateOrganizationModes = ["Ano", "Ano/Mês", "Ano/Mês/Dia"];
         CleanupModes = ["Conservador", "Balanceado", "Agressivo"];
+        MediaOrganizationModes = ["Separar Fotos e Vídeos", "Unificar Fotos e Vídeos", "Extrair Somente Vídeos"];
+        DeletionApplyTypeOptions = ["Todos", "Somente Fotos", "Somente Vídeos"];
 
         BrowseFolderCommand = new RelayCommand(BrowseFolder);
         _scanFilesCommand = new RelayCommand(() => _ = ScanFilesAsync(), () => !IsBusy);
         _scanUnwantedCommand = new RelayCommand(() => _ = ScanUnwantedAsync(), () => !IsBusy);
+        _markAllDisplayedItemsCommand = new RelayCommand(() => SetAllDisplayedItemsMarked(true), () => !IsBusy && DisplayedItems.Count > 0);
+        _unmarkAllDisplayedItemsCommand = new RelayCommand(() => SetAllDisplayedItemsMarked(false), () => !IsBusy && DisplayedItems.Count > 0);
+        _markAllUnwantedItemsCommand = new RelayCommand(() => SetAllUnwantedItemsMarked(true), () => !IsBusy && UnwantedItems.Count > 0);
+        _unmarkAllUnwantedItemsCommand = new RelayCommand(() => SetAllUnwantedItemsMarked(false), () => !IsBusy && UnwantedItems.Count > 0);
         _generateDeletionListCommand = new RelayCommand(() => _ = GenerateDeletionListAsync(), () => !IsBusy);
         _deleteMarkedCandidatesCommand = new RelayCommand(() => _ = DeleteMarkedCandidatesAsync(), () => !IsBusy && DeletionCandidates.Any(x => x.IsMarked && x.CanDelete));
         _cancelCurrentOperationCommand = new RelayCommand(CancelCurrentOperation, () => IsBusy);
@@ -104,6 +130,12 @@ public sealed class MainViewModel : ObservableObject
         _exportDeletionListTxtCommand = new RelayCommand(ExportDeletionListTxt, () => DeletionCandidates.Count > 0);
         _applyCleanupModeCommand = new RelayCommand(ApplyCleanupMode);
         _autoSelectByGroupCommand = new RelayCommand(AutoSelectByGroup, () => DeletionCandidates.Any(x => x.CanDelete));
+        _startFocusedReviewCommand = new RelayCommand(StartFocusedReviewMode, () => !IsBusy && DeletionCandidates.Any(x => x.CanDelete));
+        _exitFocusedReviewCommand = new RelayCommand(ExitFocusedReviewMode, () => IsFocusedReviewMode);
+        _focusedReviewPreviousCommand = new RelayCommand(() => MoveFocusedReview(-1), () => IsFocusedReviewMode && _focusedReviewItems.Count > 0);
+        _focusedReviewNextCommand = new RelayCommand(() => MoveFocusedReview(1), () => IsFocusedReviewMode && _focusedReviewItems.Count > 0);
+        _focusedReviewKeepCommand = new RelayCommand(() => SetFocusedReviewMark(false), () => IsFocusedReviewMode && CurrentFocusedReviewCandidate is not null);
+        _focusedReviewDeleteCommand = new RelayCommand(() => SetFocusedReviewMark(true), () => IsFocusedReviewMode && CurrentFocusedReviewCandidate is not null);
         _undoLastOperationCommand = new RelayCommand(() => _ = UndoLastOperationAsync(), () => !IsBusy && _undoBatches.Count > 0);
         _undoSelectedOperationCommand = new RelayCommand(() => _ = UndoSelectedOperationAsync(), () => !IsBusy && !string.IsNullOrWhiteSpace(SelectedUndoBatchId));
 
@@ -111,6 +143,10 @@ public sealed class MainViewModel : ObservableObject
         ApplyFiltersCommand = new RelayCommand(ApplyFilters);
         ClearFiltersCommand = new RelayCommand(ClearFilters);
         ScanUnwantedCommand = _scanUnwantedCommand;
+        MarkAllDisplayedItemsCommand = _markAllDisplayedItemsCommand;
+        UnmarkAllDisplayedItemsCommand = _unmarkAllDisplayedItemsCommand;
+        MarkAllUnwantedItemsCommand = _markAllUnwantedItemsCommand;
+        UnmarkAllUnwantedItemsCommand = _unmarkAllUnwantedItemsCommand;
         GenerateDeletionListCommand = _generateDeletionListCommand;
         MarkAllDeletionCandidatesCommand = new RelayCommand(() => SetAllCandidatesMarked(true), () => DeletionCandidates.Count > 0);
         UnmarkAllDeletionCandidatesCommand = new RelayCommand(() => SetAllCandidatesMarked(false), () => DeletionCandidates.Count > 0);
@@ -124,6 +160,12 @@ public sealed class MainViewModel : ObservableObject
         ExportDeletionListTxtCommand = _exportDeletionListTxtCommand;
         ApplyCleanupModeCommand = _applyCleanupModeCommand;
         AutoSelectByGroupCommand = _autoSelectByGroupCommand;
+        StartFocusedReviewCommand = _startFocusedReviewCommand;
+        ExitFocusedReviewCommand = _exitFocusedReviewCommand;
+        FocusedReviewPreviousCommand = _focusedReviewPreviousCommand;
+        FocusedReviewNextCommand = _focusedReviewNextCommand;
+        FocusedReviewKeepCommand = _focusedReviewKeepCommand;
+        FocusedReviewDeleteCommand = _focusedReviewDeleteCommand;
         UndoLastOperationCommand = _undoLastOperationCommand;
         UndoSelectedOperationCommand = _undoSelectedOperationCommand;
 
@@ -140,12 +182,18 @@ public sealed class MainViewModel : ObservableObject
     public IReadOnlyList<string> KeepPreferenceOptions { get; }
     public IReadOnlyList<string> DateOrganizationModes { get; }
     public IReadOnlyList<string> CleanupModes { get; }
+    public IReadOnlyList<string> MediaOrganizationModes { get; }
+    public IReadOnlyList<string> DeletionApplyTypeOptions { get; }
 
     public RelayCommand BrowseFolderCommand { get; }
     public RelayCommand ScanFilesCommand { get; }
     public RelayCommand ApplyFiltersCommand { get; }
     public RelayCommand ClearFiltersCommand { get; }
     public RelayCommand ScanUnwantedCommand { get; }
+    public RelayCommand MarkAllDisplayedItemsCommand { get; }
+    public RelayCommand UnmarkAllDisplayedItemsCommand { get; }
+    public RelayCommand MarkAllUnwantedItemsCommand { get; }
+    public RelayCommand UnmarkAllUnwantedItemsCommand { get; }
     public RelayCommand GenerateDeletionListCommand { get; }
     public RelayCommand MarkAllDeletionCandidatesCommand { get; }
     public RelayCommand UnmarkAllDeletionCandidatesCommand { get; }
@@ -159,6 +207,12 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ExportDeletionListTxtCommand { get; }
     public RelayCommand ApplyCleanupModeCommand { get; }
     public RelayCommand AutoSelectByGroupCommand { get; }
+    public RelayCommand StartFocusedReviewCommand { get; }
+    public RelayCommand ExitFocusedReviewCommand { get; }
+    public RelayCommand FocusedReviewPreviousCommand { get; }
+    public RelayCommand FocusedReviewNextCommand { get; }
+    public RelayCommand FocusedReviewKeepCommand { get; }
+    public RelayCommand FocusedReviewDeleteCommand { get; }
     public RelayCommand UndoLastOperationCommand { get; }
     public RelayCommand UndoSelectedOperationCommand { get; }
 
@@ -251,7 +305,7 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedItem, value))
             {
-                PreviewImage = LoadPreviewImage(value?.FullPath, value?.IsImage == true);
+                _ = LoadSelectedItemPreviewAsync(value);
             }
         }
     }
@@ -263,9 +317,7 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedDeletionCandidate, value))
             {
-                DeletionPreviewImage = LoadPreviewImage(value?.FullPath, value?.Item.IsImage == true);
-                var canLoadKeep = value?.Item.IsImage == true && !string.IsNullOrWhiteSpace(value?.KeepFilePath);
-                KeepDeletionPreviewImage = LoadPreviewImage(value?.KeepFilePath, canLoadKeep);
+                _ = LoadDeletionPreviewAsync(value);
             }
         }
     }
@@ -293,6 +345,37 @@ public sealed class MainViewModel : ObservableObject
         get => _compareModeEnabled;
         set => SetProperty(ref _compareModeEnabled, value);
     }
+
+    public bool IsFocusedReviewMode
+    {
+        get => _isFocusedReviewMode;
+        private set
+        {
+            if (SetProperty(ref _isFocusedReviewMode, value))
+            {
+                OnPropertyChanged(nameof(FocusedReviewProgressLabel));
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public string FocusedReviewProgressLabel
+    {
+        get
+        {
+            if (!IsFocusedReviewMode || _focusedReviewItems.Count == 0 || _focusedReviewIndex < 0)
+            {
+                return "0/0";
+            }
+
+            return $"{_focusedReviewIndex + 1}/{_focusedReviewItems.Count}";
+        }
+    }
+
+    private DeletionCandidate? CurrentFocusedReviewCandidate =>
+        _focusedReviewIndex >= 0 && _focusedReviewIndex < _focusedReviewItems.Count
+            ? _focusedReviewItems[_focusedReviewIndex]
+            : null;
 
     public string? SelectedUndoBatchId
     {
@@ -410,6 +493,24 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _cleanupMode;
         set => SetProperty(ref _cleanupMode, value);
+    }
+
+    public string MediaOrganizationMode
+    {
+        get => _mediaOrganizationMode;
+        set => SetProperty(ref _mediaOrganizationMode, value);
+    }
+
+    public string MediaOperationFolderName
+    {
+        get => _mediaOperationFolderName;
+        set => SetProperty(ref _mediaOperationFolderName, value);
+    }
+
+    public string DeletionApplyType
+    {
+        get => _deletionApplyType;
+        set => SetProperty(ref _deletionApplyType, value);
     }
 
     private void BrowseFolder()
@@ -577,15 +678,22 @@ public sealed class MainViewModel : ObservableObject
                 KeepPreference = KeepPreference
             };
 
-            var analysisStart = Stopwatch.StartNew();
+            var currentStageIndex = -1;
+            var currentStageStart = Stopwatch.StartNew();
             var progress = new Progress<AnalysisProgressInfo>(p =>
             {
+                if (p.StageIndex != currentStageIndex)
+                {
+                    currentStageIndex = p.StageIndex;
+                    currentStageStart.Restart();
+                }
+
                 var stageRatio = p.StageTotal > 0 ? (double)p.StageProcessed / p.StageTotal : 1d;
                 var totalStages = Math.Max(1, p.TotalStages);
                 var percent = (((double)p.StageIndex - 1d) + Math.Clamp(stageRatio, 0d, 1d)) / totalStages * 100d;
-                var etaLabel = BuildEtaLabel(percent, analysisStart.Elapsed);
-                UpdateProgress(percent, false, $"Etapa {p.StageIndex}/{p.TotalStages}: {p.Stage} | {etaLabel}");
-                StatusMessage = $"Gerando lista de exclusão... {p.Stage} ({p.StageProcessed}/{p.StageTotal}) | {etaLabel}";
+                var stageEtaLabel = BuildStageEtaLabel(p.StageProcessed, p.StageTotal, currentStageStart.Elapsed);
+                UpdateProgress(percent, false, $"Etapa {p.StageIndex}/{p.TotalStages}: {p.Stage} | ETA da etapa: {stageEtaLabel}");
+                StatusMessage = $"Gerando lista de exclusão... Etapa {p.StageIndex}/{p.TotalStages} - {p.Stage} ({p.StageProcessed}/{p.StageTotal}) | ETA desta etapa: {stageEtaLabel}";
             });
 
             var candidates = await Task.Run(() => _duplicateAnalysisService.BuildDeletionCandidates(_allItems, options, cts.Token, progress), cts.Token);
@@ -616,10 +724,12 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task DeleteMarkedCandidatesAsync()
     {
-        var marked = DeletionCandidates.Where(x => x.IsMarked && x.CanDelete).ToList();
+        var marked = DeletionCandidates
+            .Where(x => x.IsMarked && x.CanDelete && MatchesDeletionType(x.Item.Kind, DeletionApplyType))
+            .ToList();
         if (marked.Count == 0)
         {
-            StatusMessage = "Nenhum item marcado para exclusão.";
+            StatusMessage = $"Nenhum item marcado para exclusão no filtro: {DeletionApplyType}.";
             return;
         }
 
@@ -875,10 +985,12 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task DeleteMarkedUnwantedAsync()
     {
-        var marked = UnwantedItems.Where(x => x.IsMarked).ToList();
+        var marked = UnwantedItems
+            .Where(x => x.IsMarked && MatchesDeletionType(x.Kind, DeletionApplyType))
+            .ToList();
         if (marked.Count == 0)
         {
-            StatusMessage = "Nenhum arquivo indesejado marcado para exclusão.";
+            StatusMessage = $"Nenhum arquivo indesejado marcado para exclusão no filtro: {DeletionApplyType}.";
             return;
         }
 
@@ -1011,12 +1123,67 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var photosFolder = Path.Combine(CurrentFolder, "Fotos");
-        var videosFolder = Path.Combine(CurrentFolder, "Videos");
         var modeLabel = IsDryRun ? " (Dry Run)" : string.Empty;
+        var normalizedFolderName = string.IsNullOrWhiteSpace(MediaOperationFolderName)
+            ? "MidiaUnificada"
+            : MediaOperationFolderName.Trim();
+
+        var unifiedFolder = Path.Combine(CurrentFolder, normalizedFolderName);
+        var extractedVideosFolder = Path.Combine(CurrentFolder, normalizedFolderName);
+        var selectedMode = MediaOrganizationMode;
+
+        List<MediaItem> itemsToProcess;
+        Func<MediaItem, string> resolveDestinationRoot;
+        string confirmText;
+        string operationLabel;
+
+        switch (selectedMode)
+        {
+            case "Unificar Fotos e Vídeos":
+                itemsToProcess = all;
+                resolveDestinationRoot = _ => unifiedFolder;
+                confirmText = $"{modeLabel} Unificar {photos.Count} fotos e {videos.Count} vídeos em:\n{unifiedFolder}\n\nDeseja continuar?";
+                operationLabel = "Unificação";
+                break;
+            case "Extrair Somente Vídeos":
+                itemsToProcess = videos;
+                if (itemsToProcess.Count == 0)
+                {
+                    StatusMessage = "Nenhum vídeo encontrado para extrair.";
+                    return;
+                }
+
+                resolveDestinationRoot = _ => extractedVideosFolder;
+                confirmText = $"{modeLabel} Extrair {videos.Count} vídeos para:\n{extractedVideosFolder}\n\nDeseja continuar?";
+                operationLabel = "Extração de vídeos";
+                break;
+            default:
+                var currentFolderFull = Path.GetFullPath(CurrentFolder);
+                itemsToProcess = IncludeSubfolders
+                    ? all.OrderByDescending(x => x.DirectoryPath.Count(c => c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar)).ToList()
+                    : all.Where(x => Path.GetFullPath(x.DirectoryPath).Equals(currentFolderFull, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (itemsToProcess.Count == 0)
+                {
+                    StatusMessage = "Não há fotos ou vídeos na pasta atual para separar.";
+                    return;
+                }
+
+                resolveDestinationRoot = item =>
+                {
+                    var localRoot = item.DirectoryPath;
+                    var localFolderName = item.Kind == MediaKind.Foto ? "Fotos" : "Videos";
+                    return Path.Combine(localRoot, localFolderName);
+                };
+                var scopeLabel = IncludeSubfolders ? "em todas as subpastas" : "apenas na pasta raiz selecionada";
+                confirmText = $"{modeLabel} Separar {itemsToProcess.Count} arquivos por pasta de origem ({scopeLabel}).\nA pasta de destino será local em cada ramo (Fotos/Videos).\n\nDeseja continuar?";
+                operationLabel = "Separação";
+                break;
+        }
+
         var confirm = System.Windows.MessageBox.Show(
-            $"{modeLabel} Separar {photos.Count} fotos e {videos.Count} vídeos nas pastas:\n{photosFolder}\n{videosFolder}\n\nDeseja continuar?",
-            "Separar fotos e vídeos",
+            confirmText,
+            $"Organizar mídia - {selectedMode}",
             System.Windows.MessageBoxButton.YesNo,
             System.Windows.MessageBoxImage.Question);
 
@@ -1026,12 +1193,12 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var cts = BeginOperation("Separando fotos e vídeos...", false);
+        var cts = BeginOperation($"{operationLabel} de mídia...", false);
         var moved = 0;
         var failed = 0;
         var logLines = new List<string>();
         var movedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var undoBatch = CreateUndoBatch($"Separar fotos/videos ({all.Count} arquivos)");
+        var undoBatch = CreateUndoBatch($"{selectedMode} ({itemsToProcess.Count} arquivos)");
 
         try
         {
@@ -1039,23 +1206,45 @@ public sealed class MainViewModel : ObservableObject
             {
                 if (!IsDryRun)
                 {
-                    Directory.CreateDirectory(photosFolder);
-                    Directory.CreateDirectory(videosFolder);
+                    if (selectedMode == "Unificar Fotos e Vídeos")
+                    {
+                        Directory.CreateDirectory(unifiedFolder);
+                    }
+                    else if (selectedMode == "Extrair Somente Vídeos")
+                    {
+                        Directory.CreateDirectory(extractedVideosFolder);
+                    }
                 }
 
-                var total = all.Count;
+                var total = itemsToProcess.Count;
                 var processed = 0;
 
-                foreach (var item in all)
+                foreach (var item in itemsToProcess)
                 {
                     cts.Token.ThrowIfCancellationRequested();
                     try
                     {
-                        var destinationRoot = item.Kind == MediaKind.Foto ? photosFolder : videosFolder;
+                        var destinationRoot = resolveDestinationRoot(item);
+                        var localFolderName = item.Kind == MediaKind.Foto ? "Fotos" : "Videos";
+                        var sourceDirName = Path.GetFileName(item.DirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                        if (string.Equals(sourceDirName, localFolderName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
                         var fileName = Path.GetFileName(item.FullPath);
                         var targetPath = GetUniqueDestinationPath(destinationRoot, fileName);
+
+                        var sourceFull = Path.GetFullPath(item.FullPath);
+                        var targetFull = Path.GetFullPath(targetPath);
+                        if (sourceFull.Equals(targetFull, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
                         if (!IsDryRun)
                         {
+                            Directory.CreateDirectory(destinationRoot);
                             File.Move(item.FullPath, targetPath);
                             movedPaths.Add(item.FullPath);
                             undoBatch.Entries.Add(new UndoEntry
@@ -1066,7 +1255,7 @@ public sealed class MainViewModel : ObservableObject
                         }
 
                         moved++;
-                        logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_SEPARATE_MEDIA" : "SEPARATE_MEDIA")} | {item.FullPath} => {targetPath}");
+                        logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_ORGANIZE_MEDIA" : "ORGANIZE_MEDIA")} | Modo:{selectedMode} | {item.FullPath} => {targetPath}");
                     }
                     catch
                     {
@@ -1076,7 +1265,7 @@ public sealed class MainViewModel : ObservableObject
                     {
                         processed++;
                         var percent = total > 0 ? (double)processed / total * 100d : 0d;
-                        UpdateProgress(percent, false, $"Separação: {processed}/{total}");
+                        UpdateProgress(percent, false, $"{operationLabel}: {processed}/{total}");
                     }
                 }
             }, cts.Token);
@@ -1092,7 +1281,7 @@ public sealed class MainViewModel : ObservableObject
             }
 
             WriteOperationLog(logLines);
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Separação concluída")}. Processados: {moved}. Falhas: {failed}.";
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : $"{operationLabel} concluída")}. Processados: {moved}. Falhas: {failed}.";
         }
         catch (OperationCanceledException)
         {
@@ -1309,6 +1498,116 @@ public sealed class MainViewModel : ObservableObject
         RaiseCommandStates();
     }
 
+    private void StartFocusedReviewMode()
+    {
+        var candidates = DeletionCandidates
+            .Where(x => x.CanDelete)
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            StatusMessage = "Não há candidatos para revisão focada.";
+            return;
+        }
+
+        _focusedReviewItems = candidates;
+        var selectedIndex = SelectedDeletionCandidate is null
+            ? -1
+            : _focusedReviewItems.FindIndex(x => ReferenceEquals(x, SelectedDeletionCandidate));
+        _focusedReviewIndex = selectedIndex >= 0 ? selectedIndex : 0;
+        IsFocusedReviewMode = true;
+        SyncFocusedReviewSelection();
+        StatusMessage = "Modo revisão focada iniciado.";
+    }
+
+    private void ExitFocusedReviewMode()
+    {
+        IsFocusedReviewMode = false;
+        _focusedReviewItems = [];
+        _focusedReviewIndex = -1;
+        OnPropertyChanged(nameof(FocusedReviewProgressLabel));
+        StatusMessage = "Modo revisão focada finalizado.";
+        RaiseCommandStates();
+    }
+
+    private void MoveFocusedReview(int delta)
+    {
+        if (!IsFocusedReviewMode || _focusedReviewItems.Count == 0)
+        {
+            return;
+        }
+
+        var next = _focusedReviewIndex + delta;
+        if (next < 0)
+        {
+            next = 0;
+        }
+        else if (next >= _focusedReviewItems.Count)
+        {
+            next = _focusedReviewItems.Count - 1;
+        }
+
+        _focusedReviewIndex = next;
+        SyncFocusedReviewSelection();
+    }
+
+    private void SetFocusedReviewMark(bool markDelete)
+    {
+        var current = CurrentFocusedReviewCandidate;
+        if (current is null)
+        {
+            return;
+        }
+
+        current.IsMarked = markDelete && current.CanDelete;
+        StatusMessage = markDelete ? "Foto marcada para exclusão." : "Foto marcada para manter.";
+        if (_focusedReviewIndex < _focusedReviewItems.Count - 1)
+        {
+            _focusedReviewIndex++;
+            SyncFocusedReviewSelection();
+            return;
+        }
+
+        OnPropertyChanged(nameof(FocusedReviewProgressLabel));
+    }
+
+    private void SyncFocusedReviewSelection()
+    {
+        var current = CurrentFocusedReviewCandidate;
+        if (current is not null)
+        {
+            SelectedDeletionCandidate = current;
+        }
+
+        OnPropertyChanged(nameof(FocusedReviewProgressLabel));
+        RaiseCommandStates();
+    }
+
+    private void SetAllDisplayedItemsMarked(bool marked)
+    {
+        foreach (var item in DisplayedItems)
+        {
+            item.IsMarked = marked;
+        }
+
+        StatusMessage = marked
+            ? $"{DisplayedItems.Count} itens da aba Organizar marcados."
+            : "Todos os itens da aba Organizar foram desmarcados.";
+        RaiseCommandStates();
+    }
+
+    private void SetAllUnwantedItemsMarked(bool marked)
+    {
+        foreach (var item in UnwantedItems)
+        {
+            item.IsMarked = marked;
+        }
+
+        StatusMessage = marked
+            ? $"{UnwantedItems.Count} itens da aba Indesejados marcados."
+            : "Todos os itens da aba Indesejados foram desmarcados.";
+        RaiseCommandStates();
+    }
+
     private void ApplyCleanupMode()
     {
         switch (CleanupMode)
@@ -1444,7 +1743,65 @@ public sealed class MainViewModel : ObservableObject
         RaiseCommandStates();
     }
 
-    private static BitmapImage? LoadPreviewImage(string? path, bool canLoad)
+    private async Task LoadSelectedItemPreviewAsync(MediaItem? item)
+    {
+        CancelPreviewLoad(ref _selectedItemPreviewCts);
+        var cts = new CancellationTokenSource();
+        _selectedItemPreviewCts = cts;
+        PreviewImage = null;
+
+        try
+        {
+            await Task.Delay(PreviewDebounceMs, cts.Token);
+            var image = await Task.Run(() => LoadPreviewImage(item?.FullPath, item?.IsImage == true, cts.Token), cts.Token);
+            if (!ReferenceEquals(_selectedItemPreviewCts, cts) || cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            PreviewImage = image;
+        }
+        catch (OperationCanceledException)
+        {
+            // seleção mudou: ignora
+        }
+    }
+
+    private async Task LoadDeletionPreviewAsync(DeletionCandidate? candidate)
+    {
+        CancelPreviewLoad(ref _deletionPreviewCts);
+        var cts = new CancellationTokenSource();
+        _deletionPreviewCts = cts;
+        DeletionPreviewImage = null;
+        KeepDeletionPreviewImage = null;
+
+        try
+        {
+            await Task.Delay(PreviewDebounceMs, cts.Token);
+            var selectedPath = candidate?.FullPath;
+            var canLoadSelected = candidate?.Item.IsImage == true;
+            var keepPath = candidate?.KeepFilePath;
+            var canLoadKeep = candidate?.Item.IsImage == true && !string.IsNullOrWhiteSpace(keepPath);
+
+            var selectedTask = Task.Run(() => LoadPreviewImage(selectedPath, canLoadSelected, cts.Token), cts.Token);
+            var keepTask = Task.Run(() => LoadPreviewImage(keepPath, canLoadKeep, cts.Token), cts.Token);
+            await Task.WhenAll(selectedTask, keepTask);
+
+            if (!ReferenceEquals(_deletionPreviewCts, cts) || cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            DeletionPreviewImage = selectedTask.Result;
+            KeepDeletionPreviewImage = keepTask.Result;
+        }
+        catch (OperationCanceledException)
+        {
+            // seleção mudou: ignora
+        }
+    }
+
+    private static BitmapImage? LoadPreviewImage(string? path, bool canLoad, CancellationToken cancellationToken)
     {
         if (!canLoad || string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
@@ -1453,14 +1810,21 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             using var stream = File.OpenRead(path);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
+            image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            image.DecodePixelWidth = PreviewDecodePixelWidth;
             image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
             return image;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -1468,8 +1832,32 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private static void CancelPreviewLoad(ref CancellationTokenSource? cts)
+    {
+        if (cts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch
+        {
+            // ignora
+        }
+        finally
+        {
+            cts.Dispose();
+            cts = null;
+        }
+    }
+
     private void ClearDeletionCandidates()
     {
+        ExitFocusedReviewMode();
+        CancelPreviewLoad(ref _deletionPreviewCts);
         foreach (var item in DeletionCandidates)
         {
             item.PropertyChanged -= CandidateOnPropertyChanged;
@@ -1495,6 +1883,27 @@ public sealed class MainViewModel : ObservableObject
 
             candidate.PropertyChanged -= CandidateOnPropertyChanged;
             DeletionCandidates.RemoveAt(i);
+        }
+
+        if (IsFocusedReviewMode && _focusedReviewItems.Count > 0)
+        {
+            _focusedReviewItems = _focusedReviewItems
+                .Where(x => !deletedPaths.Contains(x.FullPath))
+                .ToList();
+
+            if (_focusedReviewItems.Count == 0)
+            {
+                ExitFocusedReviewMode();
+            }
+            else
+            {
+                if (_focusedReviewIndex >= _focusedReviewItems.Count)
+                {
+                    _focusedReviewIndex = _focusedReviewItems.Count - 1;
+                }
+
+                SyncFocusedReviewSelection();
+            }
         }
 
         UpdateMarkedDeletionSummary();
@@ -1571,6 +1980,29 @@ public sealed class MainViewModel : ObservableObject
         return $"Tempo decorrido: {FormatTimeSpan(elapsed)} | ETA: {FormatTimeSpan(remaining)}";
     }
 
+    private static string BuildStageEtaLabel(int processed, int total, TimeSpan elapsed)
+    {
+        if (total <= 0 || processed <= 0 || elapsed.TotalSeconds < 2)
+        {
+            return "calculando";
+        }
+
+        if (processed >= total)
+        {
+            return "concluindo";
+        }
+
+        var fraction = (double)processed / total;
+        var estimatedTotal = TimeSpan.FromTicks((long)(elapsed.Ticks / fraction));
+        var remaining = estimatedTotal - elapsed;
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        return FormatTimeSpan(remaining);
+    }
+
     private static string FormatTimeSpan(TimeSpan value)
     {
         if (value.TotalHours >= 1)
@@ -1607,6 +2039,10 @@ public sealed class MainViewModel : ObservableObject
     {
         _scanFilesCommand.RaiseCanExecuteChanged();
         _scanUnwantedCommand.RaiseCanExecuteChanged();
+        _markAllDisplayedItemsCommand.RaiseCanExecuteChanged();
+        _unmarkAllDisplayedItemsCommand.RaiseCanExecuteChanged();
+        _markAllUnwantedItemsCommand.RaiseCanExecuteChanged();
+        _unmarkAllUnwantedItemsCommand.RaiseCanExecuteChanged();
         _generateDeletionListCommand.RaiseCanExecuteChanged();
         _deleteMarkedCandidatesCommand.RaiseCanExecuteChanged();
         _moveMarkedPhotosCommand.RaiseCanExecuteChanged();
@@ -1616,6 +2052,12 @@ public sealed class MainViewModel : ObservableObject
         _exportDeletionListCommand.RaiseCanExecuteChanged();
         _exportDeletionListTxtCommand.RaiseCanExecuteChanged();
         _autoSelectByGroupCommand.RaiseCanExecuteChanged();
+        _startFocusedReviewCommand.RaiseCanExecuteChanged();
+        _exitFocusedReviewCommand.RaiseCanExecuteChanged();
+        _focusedReviewPreviousCommand.RaiseCanExecuteChanged();
+        _focusedReviewNextCommand.RaiseCanExecuteChanged();
+        _focusedReviewKeepCommand.RaiseCanExecuteChanged();
+        _focusedReviewDeleteCommand.RaiseCanExecuteChanged();
         _undoLastOperationCommand.RaiseCanExecuteChanged();
         _undoSelectedOperationCommand.RaiseCanExecuteChanged();
         _cancelCurrentOperationCommand.RaiseCanExecuteChanged();
@@ -2015,5 +2457,15 @@ public sealed class MainViewModel : ObservableObject
         return groupLabel
             .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    private static bool MatchesDeletionType(MediaKind kind, string applyType)
+    {
+        return applyType switch
+        {
+            "Somente Fotos" => kind == MediaKind.Foto,
+            "Somente Vídeos" => kind == MediaKind.Video,
+            _ => true
+        };
     }
 }

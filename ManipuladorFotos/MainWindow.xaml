@@ -194,12 +194,24 @@
                                 </WrapPanel>
 
                                 <WrapPanel Grid.Row="1" Margin="0,4,0,0">
+                                    <Button Content="Marcar Todos"
+                                            Command="{Binding MarkAllDisplayedItemsCommand}" />
+                                    <Button Content="Desmarcar Todos"
+                                            Command="{Binding UnmarkAllDisplayedItemsCommand}"
+                                            Background="{StaticResource AccentBrush}" />
                                     <TextBox Width="200"
                                              Text="{Binding NewMoveFolderPath, UpdateSourceTrigger=PropertyChanged}"
                                              ToolTip="Nome da nova pasta (ou caminho completo) para mover as fotos marcadas." />
                                     <Button Content="Mover Selecionadas"
                                             Command="{Binding MoveMarkedPhotosCommand}" />
-                                    <Button Content="Separar Fotos/Vídeos"
+                                    <ComboBox Width="200"
+                                              ItemsSource="{Binding MediaOrganizationModes}"
+                                              SelectedItem="{Binding MediaOrganizationMode}"
+                                              ToolTip="Escolha como organizar fotos e vídeos: separar, unificar ou extrair vídeos." />
+                                    <TextBox Width="180"
+                                             Text="{Binding MediaOperationFolderName, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Nome da pasta usada em Unificar/Extrair vídeos." />
+                                    <Button Content="Organizar Mídia"
                                             Command="{Binding SeparateMediaCommand}" />
                                 </WrapPanel>
 
@@ -215,6 +227,10 @@
                                              ToolTip="Pasta base usada quando consolidar subpastas estiver ativo." />
                                     <Button Content="Organizar por Data"
                                             Command="{Binding OrganizePhotosByDateCommand}" />
+                                    <ComboBox Width="150"
+                                              ItemsSource="{Binding DeletionApplyTypeOptions}"
+                                              SelectedItem="{Binding DeletionApplyType}"
+                                              ToolTip="Aplica exclusão apenas ao tipo selecionado (todos, fotos ou vídeos)." />
                                 </WrapPanel>
                             </Grid>
                         </Expander>
@@ -315,6 +331,13 @@
                             <Button Content="Buscar Arquivos Indesejados"
                                     Command="{Binding ScanUnwantedCommand}"
                                     Margin="14,20,4,4" />
+                            <Button Content="Marcar Todos"
+                                    Command="{Binding MarkAllUnwantedItemsCommand}"
+                                    Margin="4,20,4,4" />
+                            <Button Content="Desmarcar Todos"
+                                    Command="{Binding UnmarkAllUnwantedItemsCommand}"
+                                    Background="{StaticResource AccentBrush}"
+                                    Margin="4,20,4,4" />
                             <Button Content="Excluir Marcados"
                                     Command="{Binding DeleteMarkedUnwantedCommand}"
                                     Background="#B42318"
@@ -426,6 +449,9 @@
                                             Margin="4" />
                                     <Button Content="Seleção Automática"
                                             Command="{Binding AutoSelectByGroupCommand}"
+                                            Margin="4" />
+                                    <Button Content="Modo Revisão Focada"
+                                            Command="{Binding StartFocusedReviewCommand}"
                                             Margin="4" />
                                     <Button Content="Exportar CSV"
                                             Command="{Binding ExportDeletionListCommand}"
@@ -670,6 +696,101 @@
                 </StackPanel>
             </DockPanel>
         </Border>
+
+        <Grid Grid.RowSpan="4"
+              Panel.ZIndex="900"
+              Background="#CC0B1A24"
+              Visibility="{Binding IsFocusedReviewMode, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Border Margin="18"
+                    CornerRadius="14"
+                    Padding="14"
+                    Background="White"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <Button Content="Sair da Revisão"
+                                Command="{Binding ExitFocusedReviewCommand}"
+                                Background="{StaticResource AccentBrush}"
+                                DockPanel.Dock="Right" />
+                        <StackPanel>
+                            <TextBlock Text="Modo Revisão Focada"
+                                       FontSize="20"
+                                       FontWeight="Bold"
+                                       Foreground="#1F6F8B" />
+                            <TextBlock Text="{Binding FocusedReviewProgressLabel, StringFormat=Progresso: {0}}"
+                                       FontWeight="SemiBold"
+                                       Foreground="#2E3A46"
+                                       Margin="0,4,0,0" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2.2*" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="1.1*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                CornerRadius="10"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Padding="8"
+                                Background="#F8FAFC">
+                            <Image Source="{Binding DeletionPreviewImage}" Stretch="Uniform" />
+                        </Border>
+
+                        <Border Grid.Column="2"
+                                CornerRadius="10"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Padding="8"
+                                Background="#F8FAFC">
+                            <StackPanel>
+                                <TextBlock Text="Original mantida"
+                                           FontWeight="SemiBold"
+                                           Foreground="#2E3A46" />
+                                <Border Height="240"
+                                        Margin="0,6,0,10"
+                                        CornerRadius="8"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        Background="White">
+                                    <Image Source="{Binding KeepDeletionPreviewImage}" Stretch="Uniform" />
+                                </Border>
+                                <TextBlock Text="{Binding SelectedDeletionCandidate.Name, TargetNullValue=Selecione um item}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding SelectedDeletionCandidate.SimilarityLabel, StringFormat=Similaridade: {0}}" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding SelectedDeletionCandidate.SizeLabel, StringFormat=Tamanho: {0}}" Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding SelectedDeletionCandidate.Reason}" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="11" Foreground="#55606B" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <DockPanel Grid.Row="2" Margin="0,12,0,0">
+                        <Button Content="Anterior"
+                                Command="{Binding FocusedReviewPreviousCommand}" />
+                        <Button Content="Manter"
+                                Command="{Binding FocusedReviewKeepCommand}"
+                                Background="#0F766E"
+                                Margin="8,0,0,0" />
+                        <Button Content="Excluir"
+                                Command="{Binding FocusedReviewDeleteCommand}"
+                                Background="#B42318"
+                                Margin="8,0,0,0" />
+                        <Button Content="Próxima"
+                                Command="{Binding FocusedReviewNextCommand}"
+                                Margin="8,0,0,0" />
+                    </DockPanel>
+                </Grid>
+            </Border>
+        </Grid>
 
         <Grid Grid.RowSpan="4"
               Panel.ZIndex="1000"

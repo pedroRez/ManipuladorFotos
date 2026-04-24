@@ -1,5 +1,5 @@
 ﻿#define MyAppName "ManipuladorFotos"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "pedroRez"
 #define MyAppExeName "ManipuladorFotos.exe"
 #define MyAppId "2D22B0B7-8C0D-4D65-9A63-A2D04C72AF72"
@@ -39,4 +39,5 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Executar {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
 
