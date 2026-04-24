@@ -1,5 +1,5 @@
-﻿#define MyAppName "ManipuladorFotos"
-#define MyAppVersion "1.0.7"
+#define MyAppName "ManipuladorFotos"
+#define MyAppVersion "1.0.10"
 #define MyAppPublisher "pedroRez"
 #define MyAppExeName "ManipuladorFotos.exe"
 #define MyAppId "2D22B0B7-8C0D-4D65-9A63-A2D04C72AF72"
@@ -27,7 +27,7 @@ UninstallDisplayIcon={app}\icon.ico
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
+Name: "desktopicon"; Description: "Criar atalho na �rea de trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
 
 [Files]
 Source: "..\artifacts\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"

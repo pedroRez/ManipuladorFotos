@@ -80,12 +80,6 @@
                                Foreground="#E8F1F5"
                                Margin="0,4,0,0" />
                 </StackPanel>
-                <Border Width="10" />
-                <TextBlock Text="Fase 2: Lista de exclusão com revisão visual"
-                           VerticalAlignment="Bottom"
-                           Foreground="#E8F1F5"
-                           FontWeight="SemiBold"
-                           Margin="12,0,0,2" />
             </StackPanel>
         </Border>
 
@@ -95,7 +89,8 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
                 Padding="10"
-                Margin="0,0,0,10">
+                Margin="0,0,0,10"
+                Visibility="{Binding ShowGlobalFolderBar, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -119,361 +114,377 @@
         </Border>
 
         <TabControl Grid.Row="2"
+                    SelectedIndex="{Binding SelectedMainTabIndex}"
                     Background="Transparent"
                     BorderThickness="0">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <Border Background="{TemplateBinding Background}">
+                        <ContentPresenter ContentSource="SelectedContent" />
+                    </Border>
+                </ControlTemplate>
+            </TabControl.Template>
             <TabItem Header="Organizar Fotos">
                 <Grid Margin="8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                    <Grid Visibility="{Binding IsWorkflowWizardVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Border Background="{StaticResource CardBrush}"
+                                CornerRadius="12"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Padding="16"
+                                HorizontalAlignment="Center"
+                                MaxWidth="1180">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0"
-                            Background="{StaticResource CardBrush}"
-                            CornerRadius="12"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            Padding="8"
-                            Margin="0,0,0,10">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-
-                            <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                                <TextBlock Text="Organização"
-                                           FontWeight="SemiBold"
-                                           FontSize="14"
-                                           Foreground="#2E3A46"
-                                           VerticalAlignment="Center"
-                                           DockPanel.Dock="Left" />
-                                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                                    <Button Content="{Binding OrganizeAssistantToggleLabel}"
-                                            Command="{Binding ToggleOrganizeAssistantVisibilityCommand}" />
-                                    <Button Content="{Binding OrganizeModeToggleLabel}"
-                                            Command="{Binding ToggleOrganizeModeCommand}" />
-                                </StackPanel>
-                            </DockPanel>
-
-                            <Border Grid.Row="1"
-                                    Visibility="{Binding IsSimpleAssistPanelVisible, Converter={StaticResource BoolToVisibilityConverter}}"
-                                    Background="#F8FAFC"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Padding="8">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-
-                                    <StackPanel Grid.Row="0" Orientation="Horizontal">
-                                        <TextBlock Text="{Binding OrganizeSimpleStepLabel}"
+                                <DockPanel Grid.Row="0" LastChildFill="True">
+                                    <StackPanel DockPanel.Dock="Left">
+                                        <TextBlock Text="Assistente de Organização"
+                                                   FontSize="24"
                                                    FontWeight="Bold"
-                                                   Foreground="#1F6F8B" />
-                                        <TextBlock Text=" - "
-                                                   Margin="6,0,6,0" />
-                                        <TextBlock Text="{Binding OrganizeSimpleStepTitle}"
-                                                   FontWeight="SemiBold"
                                                    Foreground="#2E3A46" />
+                                        <TextBlock Text="{Binding WorkflowStepTitle}"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,6,0,0"
+                                                   Foreground="#1F6F8B" />
+                                        <TextBlock Text="{Binding WorkflowStepHint}"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="#55606B" />
                                     </StackPanel>
+                                </DockPanel>
 
-                                    <Grid Grid.Row="1" Margin="0,8,0,6">
-                                        <Border Visibility="{Binding IsSimpleStep1, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <StackPanel>
-                                                <TextBlock Text="Escolha a tarefa principal."
-                                                           Foreground="#55606B"
-                                                           Margin="0,0,0,4" />
-                                                <ComboBox Width="260"
-                                                          ItemsSource="{Binding SimpleOrganizeActions}"
-                                                          SelectedItem="{Binding SelectedSimpleOrganizeAction}" />
-                                            </StackPanel>
-                                        </Border>
+                                <WrapPanel Grid.Row="1" Margin="0,12,0,12">
+                                    <TextBlock Text="1. Objetivo" FontWeight="SemiBold" Margin="0,0,14,0" />
+                                    <TextBlock Text="2. Pasta e Scan" FontWeight="SemiBold" Margin="0,0,14,0" />
+                                    <TextBlock Text="3. Opções" FontWeight="SemiBold" Margin="0,0,14,0" />
+                                    <TextBlock Text="4. Execução" FontWeight="SemiBold" Margin="0,0,14,0" />
+                                    <TextBlock Text="5. Resultado" FontWeight="SemiBold" />
+                                </WrapPanel>
 
-                                        <Border Visibility="{Binding IsSimpleStep2, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <StackPanel>
-                                                <TextBlock Text="Ajuste só o necessário e avance."
-                                                           Foreground="#55606B"
-                                                           Margin="0,0,0,4" />
+                                <Grid Grid.Row="2">
+                                    <Border Visibility="{Binding IsWorkflowStep1, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="Selecione o que você quer fazer:"
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,0,0,6" />
+                                            <ComboBox Width="560"
+                                                      FontSize="16"
+                                                      Padding="8,6"
+                                                      ItemsSource="{Binding WorkflowObjectives}"
+                                                      SelectedItem="{Binding WorkflowObjective}" />
+                                        </StackPanel>
+                                    </Border>
 
-                                                <StackPanel Visibility="{Binding IsSimpleMediaAction, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                    <TextBlock Text="{Binding SelectedSimpleOrganizeAction, StringFormat=Ação: {0}}"
-                                                               FontWeight="SemiBold"
-                                                               Margin="0,0,0,4" />
-                                                    <CheckBox Content="Incluir subpastas"
-                                                              IsChecked="{Binding IncludeSubfolders}" />
-                                                    <StackPanel Orientation="Horizontal"
-                                                                Visibility="{Binding SimpleMediaNeedsFolderName, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                        <TextBlock Text="Nome da pasta destino/base:"
-                                                                   VerticalAlignment="Center"
-                                                                   Margin="4,0,6,0" />
-                                                        <TextBox Width="220"
-                                                                 Text="{Binding MediaOperationFolderName, UpdateSourceTrigger=PropertyChanged}" />
-                                                    </StackPanel>
-                                                </StackPanel>
-
-                                                <StackPanel Visibility="{Binding IsSimpleDateAction, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="Organizar por:"
-                                                                   VerticalAlignment="Center"
-                                                                   Margin="4,0,6,0" />
-                                                        <ComboBox Width="140"
-                                                                  ItemsSource="{Binding DateOrganizationModes}"
-                                                                  SelectedItem="{Binding DateOrganizationMode}" />
-                                                    </StackPanel>
-                                                    <CheckBox Content="Consolidar subpastas em base única"
-                                                              IsChecked="{Binding FlattenSubfoldersByDate}" />
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="Pasta base:"
-                                                                   VerticalAlignment="Center"
-                                                                   Margin="4,0,6,0" />
-                                                        <TextBox Width="220"
-                                                                 Text="{Binding DateOrganizationBaseFolder, UpdateSourceTrigger=PropertyChanged}" />
-                                                    </StackPanel>
-                                                </StackPanel>
-
-                                                <StackPanel Visibility="{Binding IsSimpleMoveAction, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="Destino das fotos marcadas:"
-                                                                   VerticalAlignment="Center"
-                                                                   Margin="4,0,6,0" />
-                                                        <TextBox Width="250"
-                                                                 Text="{Binding NewMoveFolderPath, UpdateSourceTrigger=PropertyChanged}" />
-                                                    </StackPanel>
-                                                    <WrapPanel Margin="0,4,0,0">
-                                                        <Button Content="Marcar Todos"
-                                                                Command="{Binding MarkAllDisplayedItemsCommand}" />
-                                                        <Button Content="Desmarcar Todos"
-                                                                Command="{Binding UnmarkAllDisplayedItemsCommand}"
-                                                                Background="{StaticResource AccentBrush}" />
-                                                    </WrapPanel>
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
-
-                                        <Border Visibility="{Binding IsSimpleStep3, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <StackPanel>
-                                                <TextBlock Text="Confira o resumo e execute."
-                                                           Foreground="#55606B"
-                                                           Margin="0,0,0,4" />
-                                                <TextBlock Text="{Binding SimpleOrganizeSummary}"
+                                    <Border Visibility="{Binding IsWorkflowStep2, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="Selecione a pasta que será analisada:"
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,0,0,6" />
+                                            <DockPanel LastChildFill="True">
+                                                <Button Content="Buscar Pasta"
+                                                        Command="{Binding BrowseFolderCommand}"
+                                                        DockPanel.Dock="Right" />
+                                                <TextBox Text="{Binding CurrentFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                            </DockPanel>
+                                            <CheckBox Content="Incluir subpastas"
+                                                      IsChecked="{Binding IncludeSubfolders}"
+                                                      Margin="0,6,0,0" />
+                                            <TextBlock Text="Ao clicar em Próximo, o sistema fará o scanner automático."
+                                                       Foreground="#55606B"
+                                                       Margin="0,8,0,0" />
+                                            <Border Background="#F8FAFC"
+                                                    BorderBrush="{StaticResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="8"
+                                                    Padding="8"
+                                                    Margin="0,12,0,0">
+                                                <TextBlock Text="{Binding WorkflowScanSummary}"
                                                            TextWrapping="Wrap"
                                                            FontWeight="SemiBold"
                                                            Foreground="#2E3A46" />
-                                            </StackPanel>
-                                        </Border>
-                                    </Grid>
+                                            </Border>
+                                            <Button Content="Visualizar Arquivos Encontrados"
+                                                    Command="{Binding WorkflowOpenFoundItemsCommand}"
+                                                    Visibility="{Binding WorkflowCanVisualizeFoundItems, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                    Margin="0,10,0,0" />
+                                        </StackPanel>
+                                    </Border>
 
-                                    <WrapPanel Grid.Row="2">
-                                        <Button Content="Anterior"
-                                                Command="{Binding OrganizeSimplePreviousStepCommand}" />
-                                        <Button Content="Próximo"
-                                                Command="{Binding OrganizeSimpleNextStepCommand}" />
-                                        <Button Content="Executar"
-                                                Command="{Binding ExecuteSimpleOrganizeActionCommand}" />
-                                    </WrapPanel>
+                                    <Border Visibility="{Binding IsWorkflowStep3, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <Grid>
+                                            <Border Visibility="{Binding IsWorkflowObjectiveCleanup, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Opções da limpeza de fotos"
+                                                               FontWeight="SemiBold"
+                                                               Margin="0,0,0,6" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="Modo de limpeza:"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="0,0,6,0" />
+                                                        <ComboBox Width="180"
+                                                                  ItemsSource="{Binding CleanupModes}"
+                                                                  SelectedItem="{Binding CleanupMode}" />
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="Preferência para manter original:"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="0,0,6,0" />
+                                                        <ComboBox Width="200"
+                                                                  ItemsSource="{Binding KeepPreferenceOptions}"
+                                                                  SelectedItem="{Binding KeepPreference}" />
+                                                    </StackPanel>
+                                                    <CheckBox Content="Comparar por nome igual"
+                                                              IsChecked="{Binding UseSameNameRule}" />
+                                                    <CheckBox Content="Comparar por tamanho igual"
+                                                              IsChecked="{Binding UseSameSizeRule}" />
+                                                    <CheckBox Content="Comparar por sequência parecida"
+                                                              IsChecked="{Binding UseSimilarInSequenceRule}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Visibility="{Binding IsWorkflowObjectiveUnwanted, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Opções para arquivos indesejados"
+                                                               FontWeight="SemiBold"
+                                                               Margin="0,0,0,6" />
+                                                    <TextBlock Text="Extensões (separadas por vírgula):" />
+                                                    <TextBox Width="460"
+                                                             Text="{Binding UnwantedExtensions, UpdateSourceTrigger=PropertyChanged}" />
+                                                    <TextBlock Text="A seleção por extensão já define quais arquivos entram na limpeza."
+                                                               Margin="0,8,0,0"
+                                                               Foreground="#55606B" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Visibility="{Binding IsWorkflowObjectiveOrganize, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Opções de organização"
+                                                               FontWeight="SemiBold"
+                                                               Margin="0,0,0,6" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="Ação:"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="0,0,6,0" />
+                                                        <ComboBox Width="260"
+                                                                  ItemsSource="{Binding WorkflowOrganizeActions}"
+                                                                  SelectedItem="{Binding WorkflowOrganizeAction}" />
+                                                    </StackPanel>
+
+                                                    <StackPanel Visibility="{Binding IsWorkflowOrganizeActionMedia, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                        <StackPanel Orientation="Horizontal"
+                                                                    Visibility="{Binding WorkflowOrganizeNeedsFolderName, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                            <TextBlock Text="Nome da pasta destino/base:"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0,0,6,0" />
+                                                            <TextBox Width="220"
+                                                                     Text="{Binding MediaOperationFolderName, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+
+                                                    <StackPanel Visibility="{Binding IsWorkflowOrganizeActionDate, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="Organizar por:"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0,0,6,0" />
+                                                            <ComboBox Width="140"
+                                                                      ItemsSource="{Binding DateOrganizationModes}"
+                                                                      SelectedItem="{Binding DateOrganizationMode}" />
+                                                        </StackPanel>
+                                                        <CheckBox Content="Consolidar subpastas em base única"
+                                                                  IsChecked="{Binding FlattenSubfoldersByDate}" />
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="Pasta base:"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0,0,6,0" />
+                                                            <TextBox Width="220"
+                                                                     Text="{Binding DateOrganizationBaseFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+
+                                                    <StackPanel Visibility="{Binding IsWorkflowOrganizeActionMove, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="Destino das fotos marcadas:"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0,0,6,0" />
+                                                            <TextBox Width="260"
+                                                                     Text="{Binding NewMoveFolderPath, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </StackPanel>
+                                                        <WrapPanel Margin="0,4,0,0">
+                                                            <Button Content="Marcar Todos"
+                                                                    Command="{Binding MarkAllDisplayedItemsCommand}" />
+                                                            <Button Content="Desmarcar Todos"
+                                                                    Command="{Binding UnmarkAllDisplayedItemsCommand}"
+                                                                    Background="{StaticResource AccentBrush}" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+
+                                    <Border Visibility="{Binding IsWorkflowStep4, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="Tudo pronto para executar."
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,0,0,6" />
+                                            <TextBlock Text="{Binding WorkflowStepHint}"
+                                                       Foreground="#55606B"
+                                                       Margin="0,0,0,10" />
+                                            <Button Content="{Binding WorkflowExecuteLabel}"
+                                                    Command="{Binding WorkflowExecuteStepCommand}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Visibility="{Binding IsWorkflowStep5, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="Processo finalizado"
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,0,0,6" />
+                                            <Border Background="#F8FAFC"
+                                                    BorderBrush="{StaticResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="8"
+                                                    Padding="8">
+                                                <TextBlock Text="{Binding WorkflowExecutionSummary}"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="#2E3A46" />
+                                            </Border>
+                                            <WrapPanel Margin="0,10,0,0">
+                                                <Button Content="Nova operação"
+                                                        Command="{Binding WorkflowRestartCommand}" />
+                                                <Button Content="Iniciar revisão focada"
+                                                        Command="{Binding StartFocusedReviewCommand}"
+                                                        Visibility="{Binding CanStartFocusedReviewFromWorkflow, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                <Button Content="Desfazer Última"
+                                                        Command="{Binding UndoLastOperationCommand}" />
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
-                            </Border>
 
-                            <Border Grid.Row="1"
-                                    Visibility="{Binding IsSimpleAssistHintVisible, Converter={StaticResource BoolToVisibilityConverter}}"
-                                    Background="#F8FAFC"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Padding="8">
-                                <TextBlock Text="Modo focado na visualização ativo. Clique em 'Mostrar assistente' para voltar ao passo a passo."
-                                           Foreground="#55606B" />
-                            </Border>
+                                <DockPanel Grid.Row="3" Margin="0,14,0,0">
+                                    <Button Content="← Voltar"
+                                            Command="{Binding WorkflowPreviousStepCommand}"
+                                            DockPanel.Dock="Left" />
+                                    <Button Content="Avançar →"
+                                            Command="{Binding WorkflowNextStepCommand}"
+                                            Visibility="{Binding IsWorkflowNextVisible, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            DockPanel.Dock="Right" />
+                                </DockPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
 
-                            <Border Grid.Row="1"
-                                    Visibility="{Binding IsAdvancedOrganizeMode, Converter={StaticResource BoolToVisibilityConverter}}"
-                                    Background="#F8FAFC"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Padding="8">
-                                <StackPanel>
-                                    <WrapPanel>
-                                        <Button Content="{Binding AdvancedOrganizeOptionsToggleLabel}"
-                                                Command="{Binding ToggleAdvancedOrganizeOptionsCommand}" />
+                    <Grid Visibility="{Binding IsWorkflowFocusedVisualization, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Background="{StaticResource CardBrush}"
+                                CornerRadius="12"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Padding="8"
+                                Margin="0,0,0,10">
+                            <StackPanel>
+                                <DockPanel>
+                                    <TextBlock Text="Visualização concentrada dos arquivos encontrados"
+                                               FontWeight="Bold"
+                                               VerticalAlignment="Center"
+                                               Foreground="#2E3A46"
+                                               DockPanel.Dock="Left" />
+                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                                         <Button Content="Marcar Todos"
                                                 Command="{Binding MarkAllDisplayedItemsCommand}" />
                                         <Button Content="Desmarcar Todos"
                                                 Command="{Binding UnmarkAllDisplayedItemsCommand}"
                                                 Background="{StaticResource AccentBrush}" />
-                                    </WrapPanel>
+                                        <Button Content="← Voltar"
+                                                Command="{Binding WorkflowCloseFoundItemsCommand}" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <TextBlock Text="{Binding WorkflowScanSummary}"
+                                           Margin="0,6,0,0"
+                                           Foreground="#55606B"
+                                           FontSize="12" />
+                            </StackPanel>
+                        </Border>
 
-                                    <Expander Header="Filtros e ações avançadas"
-                                              IsExpanded="{Binding IsAdvancedOrganizeOptionsOpen}"
-                                              FontWeight="SemiBold"
-                                              Foreground="#2E3A46"
-                                              Margin="0,6,0,0">
-                                        <Grid Margin="0,6,0,0">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.1*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="1.9*" />
+                            </Grid.ColumnDefinitions>
 
-                                            <WrapPanel Grid.Row="0">
-                                                <StackPanel>
-                                                    <TextBlock Text="Nome contém" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <TextBox Width="200" Text="{Binding NameFilter, UpdateSourceTrigger=PropertyChanged}" />
-                                                </StackPanel>
+                            <Border Grid.Column="0"
+                                    Background="{StaticResource CardBrush}"
+                                    CornerRadius="12"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    Padding="8">
+                                <DataGrid ItemsSource="{Binding DisplayedItems}"
+                                          SelectedItem="{Binding SelectedItem}"
+                                          IsReadOnly="False"
+                                          AutoGenerateColumns="False"
+                                          SelectionMode="Single"
+                                          SelectionUnit="FullRow"
+                                          FontSize="13"
+                                          RowHeight="30"
+                                          GridLinesVisibility="Horizontal"
+                                          RowHeaderWidth="0">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="Marcar" Binding="{Binding IsMarked}" Width="0.7*" />
+                                        <DataGridTextColumn Header="Nome" Binding="{Binding Name}" Width="2*" />
+                                        <DataGridTextColumn Header="Extensão" Binding="{Binding Extension}" Width="0.8*" />
+                                        <DataGridTextColumn Header="Tipo" Binding="{Binding Kind}" Width="0.8*" />
+                                        <DataGridTextColumn Header="Data Original" Binding="{Binding PrimaryPhotoDate, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
+                                        <DataGridTextColumn Header="Modificação" Binding="{Binding LastWriteTime, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
+                                        <DataGridTextColumn Header="Tamanho" Binding="{Binding SizeLabel}" Width="0.9*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Border>
 
-                                                <StackPanel>
-                                                    <TextBlock Text="Extensão" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <TextBox Width="100" Text="{Binding ExtensionFilter, UpdateSourceTrigger=PropertyChanged}" />
-                                                </StackPanel>
+                            <Border Grid.Column="2"
+                                    Background="{StaticResource CardBrush}"
+                                    CornerRadius="12"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    Padding="8">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
 
-                                                <StackPanel>
-                                                    <TextBlock Text="Tipo" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <ComboBox Width="110"
-                                                              ItemsSource="{Binding TypeOptions}"
-                                                              SelectedItem="{Binding TypeFilter}" />
-                                                </StackPanel>
+                                    <Border CornerRadius="10"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="10"
+                                            MinHeight="460"
+                                            Background="#F3F7FB">
+                                        <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
+                                    </Border>
 
-                                                <StackPanel>
-                                                    <TextBlock Text="Data original de" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <DatePicker SelectedDate="{Binding CreatedFrom}" Width="135" />
-                                                </StackPanel>
-
-                                                <StackPanel>
-                                                    <TextBlock Text="Data original até" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <DatePicker SelectedDate="{Binding CreatedTo}" Width="135" />
-                                                </StackPanel>
-
-                                                <StackPanel>
-                                                    <TextBlock Text="Min (KB)" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <TextBox Width="90" Text="{Binding MinSizeKb, UpdateSourceTrigger=PropertyChanged}" />
-                                                </StackPanel>
-
-                                                <StackPanel>
-                                                    <TextBlock Text="Max (KB)" FontSize="12" FontWeight="SemiBold" Margin="4,0,4,2" />
-                                                    <TextBox Width="90" Text="{Binding MaxSizeKb, UpdateSourceTrigger=PropertyChanged}" />
-                                                </StackPanel>
-
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="8,16,0,0">
-                                                    <Button Content="Aplicar Filtros"
-                                                            Command="{Binding ApplyFiltersCommand}" />
-                                                    <Button Content="Limpar"
-                                                            Background="{StaticResource AccentBrush}"
-                                                            Command="{Binding ClearFiltersCommand}" />
-                                                </StackPanel>
-                                            </WrapPanel>
-
-                                            <WrapPanel Grid.Row="1" Margin="0,4,0,0">
-                                                <TextBox Width="200"
-                                                         Text="{Binding NewMoveFolderPath, UpdateSourceTrigger=PropertyChanged}"
-                                                         ToolTip="Nome da nova pasta (ou caminho completo) para mover as fotos marcadas." />
-                                                <Button Content="Mover Selecionadas"
-                                                        Command="{Binding MoveMarkedPhotosCommand}" />
-                                                <ComboBox Width="200"
-                                                          ItemsSource="{Binding MediaOrganizationModes}"
-                                                          SelectedItem="{Binding MediaOrganizationMode}"
-                                                          ToolTip="Escolha como organizar fotos e vídeos: separar, unificar ou extrair vídeos." />
-                                                <TextBox Width="180"
-                                                         Text="{Binding MediaOperationFolderName, UpdateSourceTrigger=PropertyChanged}"
-                                                         ToolTip="Nome da pasta usada em Unificar/Extrair vídeos." />
-                                                <Button Content="Organizar Mídia"
-                                                        Command="{Binding SeparateMediaCommand}" />
-                                            </WrapPanel>
-
-                                            <WrapPanel Grid.Row="2" Margin="0,4,0,0">
-                                                <ComboBox Width="130"
-                                                          ItemsSource="{Binding DateOrganizationModes}"
-                                                          SelectedItem="{Binding DateOrganizationMode}" />
-                                                <CheckBox Content="Consolidar subpastas"
-                                                          IsChecked="{Binding FlattenSubfoldersByDate}"
-                                                          ToolTip="Quando ativo, move todas as fotos para uma base única e organiza por data." />
-                                                <TextBox Width="170"
-                                                         Text="{Binding DateOrganizationBaseFolder, UpdateSourceTrigger=PropertyChanged}"
-                                                         ToolTip="Pasta base usada quando consolidar subpastas estiver ativo." />
-                                                <Button Content="Organizar por Data"
-                                                        Command="{Binding OrganizePhotosByDateCommand}" />
-                                                <ComboBox Width="150"
-                                                          ItemsSource="{Binding DeletionApplyTypeOptions}"
-                                                          SelectedItem="{Binding DeletionApplyType}"
-                                                          ToolTip="Aplica exclusão apenas ao tipo selecionado (todos, fotos ou vídeos)." />
-                                            </WrapPanel>
-                                        </Grid>
-                                    </Expander>
-                                </StackPanel>
+                                    <StackPanel Grid.Row="1" Margin="0,10,0,0">
+                                        <TextBlock Text="Pré-visualização"
+                                                   FontWeight="Bold"
+                                                   FontSize="14"
+                                                   Foreground="#2E3A46" />
+                                        <TextBlock Text="{Binding SelectedItem.Name, TargetNullValue=Selecione um arquivo na lista}" Margin="0,4,0,0" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding SelectedItem.FullPath}" TextWrapping="Wrap" Foreground="#55606B" FontSize="11" />
+                                    </StackPanel>
+                                </Grid>
                             </Border>
                         </Grid>
-                    </Border>
-
-                    <Grid Grid.Row="1">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.45*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="1.55*" />
-                        </Grid.ColumnDefinitions>
-
-                        <Border Grid.Column="0"
-                                Background="{StaticResource CardBrush}"
-                                CornerRadius="12"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1"
-                                Padding="8">
-                            <DataGrid ItemsSource="{Binding DisplayedItems}"
-                                      SelectedItem="{Binding SelectedItem}"
-                                      IsReadOnly="False"
-                                      AutoGenerateColumns="False"
-                                      SelectionMode="Single"
-                                      SelectionUnit="FullRow"
-                                      GridLinesVisibility="Horizontal"
-                                      RowHeaderWidth="0">
-                                <DataGrid.Columns>
-                                    <DataGridCheckBoxColumn Header="Marcar" Binding="{Binding IsMarked}" Width="0.7*" />
-                                    <DataGridTextColumn Header="Nome" Binding="{Binding Name}" Width="2*" />
-                                    <DataGridTextColumn Header="Extensão" Binding="{Binding Extension}" Width="0.8*" />
-                                    <DataGridTextColumn Header="Tipo" Binding="{Binding Kind}" Width="0.8*" />
-                                    <DataGridTextColumn Header="Data Original" Binding="{Binding PrimaryPhotoDate, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
-                                    <DataGridTextColumn Header="Modificação" Binding="{Binding LastWriteTime, StringFormat=dd/MM/yyyy HH:mm}" Width="1.3*" />
-                                    <DataGridTextColumn Header="Tamanho" Binding="{Binding SizeLabel}" Width="0.9*" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                        </Border>
-
-                        <Border Grid.Column="2"
-                                Background="{StaticResource CardBrush}"
-                                CornerRadius="12"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1"
-                                Padding="8">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-
-                                <Border CornerRadius="10"
-                                        BorderBrush="{StaticResource BorderBrush}"
-                                        BorderThickness="1"
-                                        Padding="8"
-                                        Background="#F8FAFC">
-                                    <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
-                                </Border>
-
-                                <StackPanel Grid.Row="1" Margin="0,10,0,0">
-                                    <TextBlock Text="Pré-visualização lateral"
-                                               FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#2E3A46" />
-                                    <TextBlock Text="{Binding SelectedItem.Name, TargetNullValue=Selecione um arquivo na lista}" Margin="0,4,0,0" FontWeight="SemiBold" />
-                                    <TextBlock Text="{Binding SelectedItem.FullPath}" TextWrapping="Wrap" Foreground="#55606B" FontSize="11" />
-                                    <TextBlock Text="Para vídeos e outros tipos, o preview de imagem pode não aparecer."
-                                               Margin="0,6,0,0"
-                                               Foreground="#6B7280"
-                                               FontSize="11" />
-                                </StackPanel>
-                            </Grid>
-                        </Border>
                     </Grid>
                 </Grid>
             </TabItem>
@@ -1010,3 +1021,4 @@
         </Grid>
     </Grid>
 </Window>
+

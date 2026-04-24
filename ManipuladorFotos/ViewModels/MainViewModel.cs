@@ -50,6 +50,14 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _executeSimpleOrganizeActionCommand;
     private readonly RelayCommand _toggleAdvancedOrganizeOptionsCommand;
     private readonly RelayCommand _toggleOrganizeAssistantVisibilityCommand;
+    private readonly RelayCommand _workflowNextStepCommand;
+    private readonly RelayCommand _workflowPreviousStepCommand;
+    private readonly RelayCommand _workflowExecuteStepCommand;
+    private readonly RelayCommand _workflowOpenFoundItemsCommand;
+    private readonly RelayCommand _workflowCloseFoundItemsCommand;
+    private readonly RelayCommand _workflowRestartCommand;
+    private readonly RelayCommand _workflowOpenDeletionTabCommand;
+    private readonly RelayCommand _workflowOpenUnwantedTabCommand;
 
     private List<MediaItem> _allItems = [];
     private bool _isBusy;
@@ -96,6 +104,14 @@ public sealed class MainViewModel : ObservableObject
     private string _selectedSimpleOrganizeAction = "Separar fotos e vídeos em pastas";
     private bool _isAdvancedOrganizeOptionsOpen;
     private bool _isOrganizeAssistantVisible = true;
+    private int _selectedMainTabIndex;
+    private int _workflowStep = 1;
+    private string _workflowObjective = "Fazer limpeza de fotos";
+    private string _workflowOrganizeAction = "Separar Fotos e Vídeos";
+    private bool _isWorkflowFocusedVisualization;
+    private bool _hasWorkflowScanData;
+    private string _workflowScanSummary = "Ainda não escaneado.";
+    private string _workflowExecutionSummary = string.Empty;
     private bool _compareModeEnabled;
     private bool _isFocusedReviewMode;
     private List<DeletionCandidate> _focusedReviewItems = [];
@@ -125,6 +141,8 @@ public sealed class MainViewModel : ObservableObject
         MediaOrganizationModes = ["Separar Fotos e Vídeos", "Unificar Fotos e Vídeos", "Extrair Somente Vídeos"];
         DeletionApplyTypeOptions = ["Todos", "Somente Fotos", "Somente Vídeos"];
         SimpleOrganizeActions = ["Separar fotos e vídeos em pastas", "Juntar tudo em uma pasta", "Extrair apenas vídeos", "Organizar fotos por data", "Mover fotos marcadas"];
+        WorkflowObjectives = ["Remover arquivos indesejados", "Fazer limpeza de fotos", "Organizar fotos e vídeos"];
+        WorkflowOrganizeActions = ["Separar Fotos e Vídeos", "Unificar Fotos e Vídeos", "Extrair Somente Vídeos", "Organizar por Data", "Mover Fotos Marcadas"];
 
         BrowseFolderCommand = new RelayCommand(BrowseFolder);
         _scanFilesCommand = new RelayCommand(() => _ = ScanFilesAsync(), () => !IsBusy);
@@ -159,6 +177,14 @@ public sealed class MainViewModel : ObservableObject
         _executeSimpleOrganizeActionCommand = new RelayCommand(() => _ = ExecuteSimpleOrganizeActionAsync(), () => !IsBusy && IsSimpleOrganizeMode && OrganizeSimpleStep == 3);
         _toggleAdvancedOrganizeOptionsCommand = new RelayCommand(() => IsAdvancedOrganizeOptionsOpen = !IsAdvancedOrganizeOptionsOpen, () => !IsBusy && !IsSimpleOrganizeMode);
         _toggleOrganizeAssistantVisibilityCommand = new RelayCommand(() => IsOrganizeAssistantVisible = !IsOrganizeAssistantVisible, () => !IsBusy && IsSimpleOrganizeMode);
+        _workflowNextStepCommand = new RelayCommand(() => _ = NextWorkflowStepAsync(), () => !IsBusy && !IsWorkflowFocusedVisualization && WorkflowStep < 4);
+        _workflowPreviousStepCommand = new RelayCommand(PreviousWorkflowStep, () => !IsBusy && !IsWorkflowFocusedVisualization && WorkflowStep > 1);
+        _workflowExecuteStepCommand = new RelayCommand(() => _ = ExecuteWorkflowStepAsync(), () => !IsBusy && !IsWorkflowFocusedVisualization && WorkflowStep == 4);
+        _workflowOpenFoundItemsCommand = new RelayCommand(OpenWorkflowFocusedVisualization, () => !IsBusy && WorkflowCanVisualizeFoundItems);
+        _workflowCloseFoundItemsCommand = new RelayCommand(CloseWorkflowFocusedVisualization, () => !IsBusy && IsWorkflowFocusedVisualization);
+        _workflowRestartCommand = new RelayCommand(RestartWorkflow, () => !IsBusy && WorkflowStep == 5);
+        _workflowOpenDeletionTabCommand = new RelayCommand(OpenDeletionListTabFromWorkflow, () => !IsBusy && CanOpenDeletionListFromWorkflow);
+        _workflowOpenUnwantedTabCommand = new RelayCommand(OpenUnwantedTabFromWorkflow, () => !IsBusy && CanOpenUnwantedFromWorkflow);
 
         ScanFilesCommand = _scanFilesCommand;
         ApplyFiltersCommand = new RelayCommand(ApplyFilters);
@@ -196,6 +222,14 @@ public sealed class MainViewModel : ObservableObject
         ExecuteSimpleOrganizeActionCommand = _executeSimpleOrganizeActionCommand;
         ToggleAdvancedOrganizeOptionsCommand = _toggleAdvancedOrganizeOptionsCommand;
         ToggleOrganizeAssistantVisibilityCommand = _toggleOrganizeAssistantVisibilityCommand;
+        WorkflowNextStepCommand = _workflowNextStepCommand;
+        WorkflowPreviousStepCommand = _workflowPreviousStepCommand;
+        WorkflowExecuteStepCommand = _workflowExecuteStepCommand;
+        WorkflowOpenFoundItemsCommand = _workflowOpenFoundItemsCommand;
+        WorkflowCloseFoundItemsCommand = _workflowCloseFoundItemsCommand;
+        WorkflowRestartCommand = _workflowRestartCommand;
+        WorkflowOpenDeletionTabCommand = _workflowOpenDeletionTabCommand;
+        WorkflowOpenUnwantedTabCommand = _workflowOpenUnwantedTabCommand;
 
         _undoBatches = _undoHistoryService.Load();
         RefreshUndoSelection();
@@ -213,6 +247,8 @@ public sealed class MainViewModel : ObservableObject
     public IReadOnlyList<string> MediaOrganizationModes { get; }
     public IReadOnlyList<string> DeletionApplyTypeOptions { get; }
     public IReadOnlyList<string> SimpleOrganizeActions { get; }
+    public IReadOnlyList<string> WorkflowObjectives { get; }
+    public IReadOnlyList<string> WorkflowOrganizeActions { get; }
 
     public RelayCommand BrowseFolderCommand { get; }
     public RelayCommand ScanFilesCommand { get; }
@@ -251,6 +287,14 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ExecuteSimpleOrganizeActionCommand { get; }
     public RelayCommand ToggleAdvancedOrganizeOptionsCommand { get; }
     public RelayCommand ToggleOrganizeAssistantVisibilityCommand { get; }
+    public RelayCommand WorkflowNextStepCommand { get; }
+    public RelayCommand WorkflowPreviousStepCommand { get; }
+    public RelayCommand WorkflowExecuteStepCommand { get; }
+    public RelayCommand WorkflowOpenFoundItemsCommand { get; }
+    public RelayCommand WorkflowCloseFoundItemsCommand { get; }
+    public RelayCommand WorkflowRestartCommand { get; }
+    public RelayCommand WorkflowOpenDeletionTabCommand { get; }
+    public RelayCommand WorkflowOpenUnwantedTabCommand { get; }
 
     public IReadOnlyList<UndoBatch> UndoBatchOptions => _undoBatches
         .OrderByDescending(x => x.CreatedAt)
@@ -730,6 +774,340 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _deletionApplyType, value);
     }
 
+    public int SelectedMainTabIndex
+    {
+        get => _selectedMainTabIndex;
+        set
+        {
+            if (!SetProperty(ref _selectedMainTabIndex, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(ShowGlobalFolderBar));
+        }
+    }
+
+    public bool ShowGlobalFolderBar => SelectedMainTabIndex != 0;
+
+    public int WorkflowStep
+    {
+        get => _workflowStep;
+        set
+        {
+            var next = Math.Clamp(value, 1, 5);
+            if (!SetProperty(ref _workflowStep, next))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsWorkflowStep1));
+            OnPropertyChanged(nameof(IsWorkflowStep2));
+            OnPropertyChanged(nameof(IsWorkflowStep3));
+            OnPropertyChanged(nameof(IsWorkflowStep4));
+            OnPropertyChanged(nameof(IsWorkflowStep5));
+            OnPropertyChanged(nameof(WorkflowStepTitle));
+            OnPropertyChanged(nameof(WorkflowStepHint));
+            OnPropertyChanged(nameof(IsWorkflowNextVisible));
+            OnPropertyChanged(nameof(IsWorkflowExecuteVisible));
+            RaiseCommandStates();
+        }
+    }
+
+    public string WorkflowObjective
+    {
+        get => _workflowObjective;
+        set
+        {
+            if (!SetProperty(ref _workflowObjective, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsWorkflowObjectiveCleanup));
+            OnPropertyChanged(nameof(IsWorkflowObjectiveUnwanted));
+            OnPropertyChanged(nameof(IsWorkflowObjectiveOrganize));
+            OnPropertyChanged(nameof(WorkflowStepHint));
+            OnPropertyChanged(nameof(WorkflowExecuteLabel));
+            OnPropertyChanged(nameof(CanStartFocusedReviewFromWorkflow));
+
+            if (IsWorkflowObjectiveUnwanted && DeletionApplyType != "Todos")
+            {
+                DeletionApplyType = "Todos";
+            }
+        }
+    }
+
+    public string WorkflowOrganizeAction
+    {
+        get => _workflowOrganizeAction;
+        set
+        {
+            if (!SetProperty(ref _workflowOrganizeAction, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsWorkflowOrganizeActionMedia));
+            OnPropertyChanged(nameof(WorkflowOrganizeNeedsFolderName));
+            OnPropertyChanged(nameof(IsWorkflowOrganizeActionDate));
+            OnPropertyChanged(nameof(IsWorkflowOrganizeActionMove));
+        }
+    }
+
+    public bool IsWorkflowFocusedVisualization
+    {
+        get => _isWorkflowFocusedVisualization;
+        set
+        {
+            if (!SetProperty(ref _isWorkflowFocusedVisualization, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsWorkflowWizardVisible));
+            RaiseCommandStates();
+        }
+    }
+
+    public bool IsWorkflowWizardVisible => !IsWorkflowFocusedVisualization;
+
+    public bool HasWorkflowScanData
+    {
+        get => _hasWorkflowScanData;
+        private set
+        {
+            if (!SetProperty(ref _hasWorkflowScanData, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(WorkflowCanVisualizeFoundItems));
+            RaiseCommandStates();
+        }
+    }
+
+    public string WorkflowScanSummary
+    {
+        get => _workflowScanSummary;
+        private set => SetProperty(ref _workflowScanSummary, value);
+    }
+
+    public string WorkflowExecutionSummary
+    {
+        get => _workflowExecutionSummary;
+        private set
+        {
+            if (!SetProperty(ref _workflowExecutionSummary, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CanOpenDeletionListFromWorkflow));
+            OnPropertyChanged(nameof(CanOpenUnwantedFromWorkflow));
+            RaiseCommandStates();
+        }
+    }
+
+    public bool IsWorkflowStep1 => WorkflowStep == 1;
+    public bool IsWorkflowStep2 => WorkflowStep == 2;
+    public bool IsWorkflowStep3 => WorkflowStep == 3;
+    public bool IsWorkflowStep4 => WorkflowStep == 4;
+    public bool IsWorkflowStep5 => WorkflowStep == 5;
+
+    public bool IsWorkflowNextVisible => WorkflowStep is 1 or 2 or 3;
+    public bool IsWorkflowExecuteVisible => WorkflowStep == 4;
+
+    public string WorkflowStepTitle => WorkflowStep switch
+    {
+        1 => "Step 1: Escolher objetivo",
+        2 => "Step 2: Selecionar pasta e escanear",
+        3 => "Step 3: Ajustar opções",
+        4 => "Step 4: Executar processo",
+        _ => "Step 5: Resultado final"
+    };
+
+    public string WorkflowStepHint
+    {
+        get
+        {
+            if (WorkflowStep == 1)
+            {
+                return "Escolha apenas uma tarefa principal para o fluxo.";
+            }
+
+            if (WorkflowStep == 2)
+            {
+                return "Defina a pasta. Ao clicar em Próximo, o sistema escaneia automaticamente.";
+            }
+
+            if (WorkflowStep == 3)
+            {
+                return WorkflowObjective switch
+                {
+                    "Remover arquivos indesejados" => "Escolha as extensões. A limpeza será baseada nelas.",
+                    "Fazer limpeza de fotos" => "Escolha as regras de limpeza e como manter a melhor foto.",
+                    _ => "Escolha como organizar fotos e vídeos para a execução."
+                };
+            }
+
+            if (WorkflowStep == 4)
+            {
+                return WorkflowObjective switch
+                {
+                    "Fazer limpeza de fotos" => "Revise as opções e gere a lista para revisão visual.",
+                    "Remover arquivos indesejados" => "Revise as extensões e execute a busca dos indesejados.",
+                    _ => "Revise as opções e execute a organização (sem etapa de revisão visual)."
+                };
+            }
+
+            return "Confira o resultado e, se quiser, abra a revisão detalhada.";
+        }
+    }
+
+    public bool IsWorkflowObjectiveCleanup => WorkflowObjective == "Fazer limpeza de fotos";
+    public bool IsWorkflowObjectiveUnwanted => WorkflowObjective == "Remover arquivos indesejados";
+    public bool IsWorkflowObjectiveOrganize => WorkflowObjective == "Organizar fotos e vídeos";
+
+    public bool IsWorkflowOrganizeActionMedia => WorkflowOrganizeAction is "Separar Fotos e Vídeos" or "Unificar Fotos e Vídeos" or "Extrair Somente Vídeos";
+    public bool WorkflowOrganizeNeedsFolderName => WorkflowOrganizeAction is "Unificar Fotos e Vídeos" or "Extrair Somente Vídeos";
+    public bool IsWorkflowOrganizeActionDate => WorkflowOrganizeAction == "Organizar por Data";
+    public bool IsWorkflowOrganizeActionMove => WorkflowOrganizeAction == "Mover Fotos Marcadas";
+
+    public bool WorkflowCanVisualizeFoundItems => HasWorkflowScanData && _allItems.Count > 0;
+
+    public string WorkflowExecuteLabel => WorkflowObjective switch
+    {
+        "Remover arquivos indesejados" => "Buscar indesejados",
+        "Fazer limpeza de fotos" => "Gerar lista de exclusão",
+        _ => "Executar organização"
+    };
+
+    public bool CanOpenDeletionListFromWorkflow => IsWorkflowObjectiveCleanup && DeletionCandidates.Count > 0;
+    public bool CanOpenUnwantedFromWorkflow => IsWorkflowObjectiveUnwanted && UnwantedItems.Count > 0;
+    public bool CanStartFocusedReviewFromWorkflow => IsWorkflowObjectiveCleanup && DeletionCandidates.Any(x => x.CanDelete);
+
+    private async Task NextWorkflowStepAsync()
+    {
+        if (WorkflowStep == 1)
+        {
+            WorkflowStep = 2;
+            return;
+        }
+
+        if (WorkflowStep == 2)
+        {
+            await ScanFilesAsync();
+            if (_allItems.Count == 0)
+            {
+                WorkflowScanSummary = "Nenhum arquivo encontrado para seguir ao próximo passo.";
+                HasWorkflowScanData = true;
+                return;
+            }
+
+            WorkflowStep = 3;
+            return;
+        }
+
+        if (WorkflowStep == 3)
+        {
+            WorkflowStep = 4;
+        }
+    }
+
+    private void PreviousWorkflowStep()
+    {
+        if (WorkflowStep > 1)
+        {
+            WorkflowStep--;
+        }
+    }
+
+    private async Task ExecuteWorkflowStepAsync()
+    {
+        if (WorkflowStep != 4)
+        {
+            return;
+        }
+
+        var undoCountBefore = _undoBatches.Count;
+
+        if (IsWorkflowObjectiveCleanup)
+        {
+            await GenerateDeletionListAsync();
+            WorkflowExecutionSummary = DeletionCandidates.Count == 0
+                ? "Nenhum candidato de exclusão encontrado."
+                : $"Lista de exclusão gerada com {DeletionCandidates.Count} itens. Você pode abrir a aba de revisão.";
+        }
+        else if (IsWorkflowObjectiveUnwanted)
+        {
+            await ScanUnwantedAsync();
+            WorkflowExecutionSummary = UnwantedItems.Count == 0
+                ? "Nenhum arquivo indesejado encontrado com as extensões informadas."
+                : $"Foram encontrados {UnwantedItems.Count} arquivos indesejados.";
+        }
+        else
+        {
+            await ExecuteWorkflowOrganizationAsync();
+            var undoHint = _undoBatches.Count > undoCountBefore
+                ? " Você pode usar 'Desfazer Última' para voltar a operação."
+                : string.Empty;
+            WorkflowExecutionSummary = $"{StatusMessage}{undoHint}";
+        }
+
+        WorkflowStep = 5;
+    }
+
+    private async Task ExecuteWorkflowOrganizationAsync()
+    {
+        switch (WorkflowOrganizeAction)
+        {
+            case "Organizar por Data":
+                await OrganizePhotosByDateAsync();
+                break;
+            case "Mover Fotos Marcadas":
+                await MoveMarkedPhotosAsync();
+                break;
+            default:
+                MediaOrganizationMode = WorkflowOrganizeAction;
+                await SeparateMediaAsync();
+                break;
+        }
+    }
+
+    private void RestartWorkflow()
+    {
+        WorkflowStep = 1;
+        IsWorkflowFocusedVisualization = false;
+        WorkflowExecutionSummary = string.Empty;
+        StatusMessage = "Fluxo reiniciado. Escolha o objetivo no Step 1.";
+    }
+
+    private void OpenWorkflowFocusedVisualization()
+    {
+        if (!WorkflowCanVisualizeFoundItems)
+        {
+            return;
+        }
+
+        IsWorkflowFocusedVisualization = true;
+    }
+
+    private void CloseWorkflowFocusedVisualization()
+    {
+        IsWorkflowFocusedVisualization = false;
+    }
+
+    private void OpenDeletionListTabFromWorkflow()
+    {
+        SelectedMainTabIndex = 2;
+    }
+
+    private void OpenUnwantedTabFromWorkflow()
+    {
+        SelectedMainTabIndex = 1;
+    }
+
     private void ToggleOrganizeMode()
     {
         IsSimpleOrganizeMode = !IsSimpleOrganizeMode;
@@ -806,6 +1184,14 @@ public sealed class MainViewModel : ObservableObject
         if (dialog.ShowDialog() == WinForms.DialogResult.OK)
         {
             CurrentFolder = dialog.SelectedPath;
+            if (SelectedMainTabIndex == 0 && WorkflowStep == 2)
+            {
+                HasWorkflowScanData = false;
+                WorkflowScanSummary = "Pasta selecionada. Clique em Avançar para executar o scanner.";
+                StatusMessage = "Pasta selecionada no Step 2. Clique em Avançar para escanear.";
+                return;
+            }
+
             _ = ScanFilesAsync();
         }
     }
@@ -849,6 +1235,7 @@ public sealed class MainViewModel : ObservableObject
             ApplyFilters();
             ClearDeletionCandidates();
             StatusMessage = $"{_allItems.Count} arquivos encontrados.";
+            UpdateWorkflowScanSummary();
         }
         catch (OperationCanceledException)
         {
@@ -857,6 +1244,8 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"Erro ao escanear: {ex.Message}";
+            WorkflowScanSummary = $"Erro no escaneamento: {ex.Message}";
+            HasWorkflowScanData = false;
         }
         finally
         {
@@ -904,6 +1293,8 @@ public sealed class MainViewModel : ObservableObject
             }
 
             StatusMessage = $"{UnwantedItems.Count} arquivos indesejados encontrados.";
+            OnPropertyChanged(nameof(CanOpenUnwantedFromWorkflow));
+            RaiseCommandStates();
         }
         catch (OperationCanceledException)
         {
@@ -988,6 +1379,8 @@ public sealed class MainViewModel : ObservableObject
             UpdateMarkedDeletionSummary();
             var protectedCount = DeletionCandidates.Count(x => !x.CanDelete);
             StatusMessage = $"Lista gerada: {DeletionCandidates.Count} itens ({protectedCount} originais protegidas).";
+            OnPropertyChanged(nameof(CanOpenDeletionListFromWorkflow));
+            RaiseCommandStates();
         }
         catch (OperationCanceledException)
         {
@@ -1272,11 +1665,11 @@ public sealed class MainViewModel : ObservableObject
     private async Task DeleteMarkedUnwantedAsync()
     {
         var marked = UnwantedItems
-            .Where(x => x.IsMarked && MatchesDeletionType(x.Kind, DeletionApplyType))
+            .Where(x => x.IsMarked)
             .ToList();
         if (marked.Count == 0)
         {
-            StatusMessage = $"Nenhum arquivo indesejado marcado para exclusão no filtro: {DeletionApplyType}.";
+            StatusMessage = "Nenhum arquivo indesejado marcado para exclusão.";
             return;
         }
 
@@ -1632,10 +2025,6 @@ public sealed class MainViewModel : ObservableObject
                 {
                     var baseName = string.IsNullOrWhiteSpace(DateOrganizationBaseFolder) ? "OrganizadoPorData" : DateOrganizationBaseFolder.Trim();
                     flattenRoot = Path.Combine(CurrentFolder, baseName);
-                    if (!IsDryRun)
-                    {
-                        Directory.CreateDirectory(flattenRoot);
-                    }
                 }
 
                 foreach (var photo in photos)
@@ -1644,12 +2033,21 @@ public sealed class MainViewModel : ObservableObject
                     try
                     {
                         var baseRoot = flattenRoot ?? photo.DirectoryPath;
-                        var datePart = BuildDatePath(photo.PrimaryPhotoDate, DateOrganizationMode);
-                        var destinationFolder = Path.Combine(baseRoot, datePart);
+                        var destinationFolder = ResolveDateDestinationFolder(
+                            photo.DirectoryPath,
+                            baseRoot,
+                            photo.PrimaryPhotoDate,
+                            DateOrganizationMode,
+                            FlattenSubfoldersByDate);
                         var fileName = Path.GetFileName(photo.FullPath);
-                        var targetPath = GetUniqueDestinationPath(destinationFolder, fileName);
-
                         var sourceFull = Path.GetFullPath(photo.FullPath);
+                        var directTarget = Path.GetFullPath(Path.Combine(destinationFolder, fileName));
+                        if (sourceFull.Equals(directTarget, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var targetPath = GetUniqueDestinationPath(destinationFolder, fileName);
                         var targetFull = Path.GetFullPath(targetPath);
                         if (sourceFull.Equals(targetFull, StringComparison.OrdinalIgnoreCase))
                         {
@@ -1690,7 +2088,8 @@ public sealed class MainViewModel : ObservableObject
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
             var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
-            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Organização concluída")} por data. Processados: {moved}. Falhas: {failed}.{errorSuffix}";
+            var undoHint = !IsDryRun && moved == 0 ? " Nenhum arquivo foi movido; não há desfazer para esta operação." : string.Empty;
+            StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Organização concluída")} por data. Processados: {moved}. Falhas: {failed}.{errorSuffix}{undoHint}";
             shouldRefreshAfter = !IsDryRun;
         }
         catch (OperationCanceledException)
@@ -2416,6 +2815,14 @@ public sealed class MainViewModel : ObservableObject
         _executeSimpleOrganizeActionCommand.RaiseCanExecuteChanged();
         _toggleAdvancedOrganizeOptionsCommand.RaiseCanExecuteChanged();
         _toggleOrganizeAssistantVisibilityCommand.RaiseCanExecuteChanged();
+        _workflowNextStepCommand.RaiseCanExecuteChanged();
+        _workflowPreviousStepCommand.RaiseCanExecuteChanged();
+        _workflowExecuteStepCommand.RaiseCanExecuteChanged();
+        _workflowOpenFoundItemsCommand.RaiseCanExecuteChanged();
+        _workflowCloseFoundItemsCommand.RaiseCanExecuteChanged();
+        _workflowRestartCommand.RaiseCanExecuteChanged();
+        _workflowOpenDeletionTabCommand.RaiseCanExecuteChanged();
+        _workflowOpenUnwantedTabCommand.RaiseCanExecuteChanged();
         _cancelCurrentOperationCommand.RaiseCanExecuteChanged();
         MarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
         UnmarkAllDeletionCandidatesCommand.RaiseCanExecuteChanged();
@@ -2427,6 +2834,20 @@ public sealed class MainViewModel : ObservableObject
         MarkedDeletionCount = marked.Count;
         _markedDeletionBytes = marked.Sum(x => x.Item.SizeBytes);
         OnPropertyChanged(nameof(MarkedDeletionSizeLabel));
+        OnPropertyChanged(nameof(CanOpenDeletionListFromWorkflow));
+        OnPropertyChanged(nameof(CanStartFocusedReviewFromWorkflow));
+    }
+
+    private void UpdateWorkflowScanSummary()
+    {
+        var total = _allItems.Count;
+        var photos = _allItems.Count(x => x.Kind == MediaKind.Foto);
+        var videos = _allItems.Count(x => x.Kind == MediaKind.Video);
+        var others = total - photos - videos;
+        WorkflowScanSummary = $"Encontrados {total} arquivos (Fotos: {photos}, Vídeos: {videos}, Outros: {others}).";
+        HasWorkflowScanData = true;
+        OnPropertyChanged(nameof(WorkflowCanVisualizeFoundItems));
+        RaiseCommandStates();
     }
 
     private UndoBatch CreateUndoBatch(string description)
@@ -2800,12 +3221,73 @@ public sealed class MainViewModel : ObservableObject
 
     private static string BuildDatePath(DateTime date, string mode)
     {
-        return mode switch
+        return Path.Combine(BuildDatePathSegments(date, mode).ToArray());
+    }
+
+    private static IEnumerable<string> BuildDatePathSegments(DateTime date, string mode)
+    {
+        yield return date.ToString("yyyy");
+
+        if (mode is "Ano/Mês" or "Ano/Mês/Dia")
         {
-            "Ano" => date.ToString("yyyy"),
-            "Ano/Mês/Dia" => Path.Combine(date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd")),
-            _ => Path.Combine(date.ToString("yyyy"), date.ToString("MM"))
-        };
+            yield return date.ToString("MM");
+        }
+
+        if (mode == "Ano/Mês/Dia")
+        {
+            yield return date.ToString("dd");
+        }
+    }
+
+    private static string ResolveDateDestinationFolder(
+        string sourceDirectory,
+        string baseRoot,
+        DateTime photoDate,
+        string mode,
+        bool flattenSubfoldersByDate)
+    {
+        var segments = BuildDatePathSegments(photoDate, mode).ToArray();
+        if (segments.Length == 0)
+        {
+            return baseRoot;
+        }
+
+        if (!flattenSubfoldersByDate && DirectoryEndsWithSegments(sourceDirectory, segments))
+        {
+            return sourceDirectory;
+        }
+
+        return Path.Combine(baseRoot, Path.Combine(segments));
+    }
+
+    private static bool DirectoryEndsWithSegments(string directoryPath, IReadOnlyList<string> segments)
+    {
+        if (segments.Count == 0)
+        {
+            return true;
+        }
+
+        var normalized = Path.GetFullPath(directoryPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var parts = normalized.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length < segments.Count)
+        {
+            return false;
+        }
+
+        var offset = parts.Length - segments.Count;
+        for (var i = 0; i < segments.Count; i++)
+        {
+            if (!string.Equals(parts[offset + i], segments[i], StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static IEnumerable<string> SplitGroups(string groupLabel)
