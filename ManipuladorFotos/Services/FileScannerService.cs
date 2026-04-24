@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO;
 using System.Windows.Media.Imaging;
 using ManipuladorFotos.Models;
@@ -25,10 +26,9 @@ public sealed class FileScannerService
         CancellationToken cancellationToken = default,
         IProgress<ScanProgressInfo>? progress = null)
     {
-        var result = new List<MediaItem>();
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
         {
-            return result;
+            return [];
         }
 
         var searchOption = includeSubfolders ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
@@ -36,60 +36,91 @@ public sealed class FileScannerService
         List<string> files;
         try
         {
-            files = Directory.EnumerateFiles(folderPath, "*.*", searchOption).ToList();
+            files = [];
+            foreach (var path in Directory.EnumerateFiles(folderPath, "*.*", searchOption))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                files.Add(path);
+                if (files.Count % 2000 == 0)
+                {
+                    progress?.Report(new ScanProgressInfo("Descobrindo arquivos", files.Count, 0));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
-            return result;
+            return [];
         }
 
         var total = files.Count;
-        var processed = 0;
-        foreach (var path in files)
+        if (total == 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (IsInternalAppPath(path))
-            {
-                continue;
-            }
-
-            try
-            {
-                var info = new FileInfo(path);
-                var ext = info.Extension;
-                var kind = ResolveKind(ext);
-                var (width, height, originalTakenTime) = kind == MediaKind.Foto
-                    ? TryReadImageMetadata(info.FullName)
-                    : ((int?)null, (int?)null, (DateTime?)null);
-
-                result.Add(new MediaItem
-                {
-                    FullPath = info.FullName,
-                    Name = Path.GetFileNameWithoutExtension(info.Name),
-                    Extension = ext,
-                    SizeBytes = info.Length,
-                    CreationTime = info.CreationTime,
-                    LastWriteTime = info.LastWriteTime,
-                    OriginalTakenTime = originalTakenTime,
-                    Kind = kind,
-                    Width = width,
-                    Height = height
-                });
-
-                processed++;
-                if (processed % 200 == 0)
-                {
-                    progress?.Report(new ScanProgressInfo(processed, total));
-                }
-            }
-            catch
-            {
-                // Ignora arquivos com acesso negado/erro de leitura.
-            }
+            progress?.Report(new ScanProgressInfo("Escaneando metadados", 0, 0));
+            return [];
         }
 
-        progress?.Report(new ScanProgressInfo(processed, total));
-        return result;
+        var processed = 0;
+        var bag = new ConcurrentBag<MediaItem>();
+
+        Parallel.ForEach(
+            files,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+            },
+            path =>
+            {
+                try
+                {
+                    if (!IsInternalAppPath(path))
+                    {
+                        var info = new FileInfo(path);
+                        var ext = info.Extension;
+                        var kind = ResolveKind(ext);
+                        var (width, height, originalTakenTime) = kind == MediaKind.Foto
+                            ? TryReadImageMetadata(info.FullName)
+                            : ((int?)null, (int?)null, (DateTime?)null);
+
+                        bag.Add(new MediaItem
+                        {
+                            FullPath = info.FullName,
+                            Name = Path.GetFileNameWithoutExtension(info.Name),
+                            Extension = ext,
+                            SizeBytes = info.Length,
+                            CreationTime = info.CreationTime,
+                            LastWriteTime = info.LastWriteTime,
+                            OriginalTakenTime = originalTakenTime,
+                            Kind = kind,
+                            Width = width,
+                            Height = height
+                        });
+                    }
+                }
+                catch
+                {
+                    // Ignora arquivos com acesso negado/erro de leitura.
+                }
+                finally
+                {
+                    var done = Interlocked.Increment(ref processed);
+                    if (done % 200 == 0 || done == total)
+                    {
+                        progress?.Report(new ScanProgressInfo("Escaneando metadados", done, total));
+                    }
+                }
+            });
+
+        if (processed < total)
+        {
+            progress?.Report(new ScanProgressInfo("Escaneando metadados", processed, total));
+        }
+
+        return bag.ToList();
     }
 
     public List<MediaItem> ScanUnwantedByExtensions(

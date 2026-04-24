@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Security.Cryptography;
+using System.Collections.Concurrent;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ManipuladorFotos.Models;
@@ -8,8 +9,8 @@ namespace ManipuladorFotos.Services;
 
 public sealed class DuplicateAnalysisService
 {
-    private readonly Dictionary<string, string> _sha256Cache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, ulong> _dHashCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _sha256Cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ulong> _dHashCache = new(StringComparer.OrdinalIgnoreCase);
 
     public List<DeletionCandidate> BuildDeletionCandidates(
         IReadOnlyCollection<MediaItem> items,
@@ -18,50 +19,64 @@ public sealed class DuplicateAnalysisService
         IProgress<AnalysisProgressInfo>? progress = null)
     {
         var candidates = new Dictionary<string, CandidateAccumulator>(StringComparer.OrdinalIgnoreCase);
-        var totalSteps = 1;
+        var totalStages = 1;
         if (options.UseSameNameRule)
         {
-            totalSteps++;
+            totalStages++;
         }
 
         if (options.UseSameSizeRule)
         {
-            totalSteps++;
+            totalStages++;
         }
 
         if (options.UseSimilarInSequenceRule)
         {
-            totalSteps++;
+            totalStages++;
         }
 
-        var completedSteps = 0;
-
-        AddExactHashSuggestions(items, candidates, options, cancellationToken);
-        completedSteps++;
-        progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando hash exato"));
+        var stageIndex = 1;
+        AddExactHashSuggestions(
+            items,
+            candidates,
+            options,
+            cancellationToken,
+            CreateProgressReporter(progress, "Analisando hash exato", stageIndex, totalStages));
         cancellationToken.ThrowIfCancellationRequested();
+        stageIndex++;
 
         if (options.UseSameNameRule)
         {
-            AddSameNameSuggestions(items, candidates, options, cancellationToken);
-            completedSteps++;
-            progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando mesmo nome"));
+            AddSameNameSuggestions(
+                items,
+                candidates,
+                options,
+                cancellationToken,
+                CreateProgressReporter(progress, "Analisando mesmo nome", stageIndex, totalStages));
             cancellationToken.ThrowIfCancellationRequested();
+            stageIndex++;
         }
 
         if (options.UseSameSizeRule)
         {
-            AddSameSizeSuggestions(items, candidates, options, cancellationToken);
-            completedSteps++;
-            progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando mesmo tamanho"));
+            AddSameSizeSuggestions(
+                items,
+                candidates,
+                options,
+                cancellationToken,
+                CreateProgressReporter(progress, "Analisando mesmo tamanho", stageIndex, totalStages));
             cancellationToken.ThrowIfCancellationRequested();
+            stageIndex++;
         }
 
         if (options.UseSimilarInSequenceRule)
         {
-            AddSimilarSequenceSuggestions(items, candidates, options, cancellationToken);
-            completedSteps++;
-            progress?.Report(new AnalysisProgressInfo(completedSteps, totalSteps, "Analisando fotos semelhantes"));
+            AddSimilarSequenceSuggestions(
+                items,
+                candidates,
+                options,
+                cancellationToken,
+                CreateProgressReporter(progress, "Analisando fotos semelhantes", stageIndex, totalStages));
             cancellationToken.ThrowIfCancellationRequested();
         }
 
@@ -74,16 +89,58 @@ public sealed class DuplicateAnalysisService
             .ToList();
     }
 
+    private static Action<int, int> CreateProgressReporter(
+        IProgress<AnalysisProgressInfo>? progress,
+        string stage,
+        int stageIndex,
+        int totalStages)
+    {
+        return (processed, total) =>
+        {
+            progress?.Report(new AnalysisProgressInfo(stage, stageIndex, totalStages, processed, total));
+        };
+    }
+
     private void AddExactHashSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
         DuplicateAnalysisOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int, int>? reportProgress)
     {
-        var groups = items
+        var photos = items
             .Where(x => x.IsImage && File.Exists(x.FullPath))
-            .GroupBy(GetSha256)
-            .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() > 1);
+            .ToList();
+        if (photos.Count == 0)
+        {
+            reportProgress?.Invoke(1, 1);
+            return;
+        }
+
+        var processedHashes = 0;
+        var hashTotal = photos.Count;
+        reportProgress?.Invoke(0, hashTotal);
+        Parallel.ForEach(
+            photos,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+            },
+            photo =>
+            {
+                _ = GetSha256(photo, cancellationToken);
+                var processed = Interlocked.Increment(ref processedHashes);
+                if (processed == hashTotal || processed % 64 == 0)
+                {
+                    reportProgress?.Invoke(processed, hashTotal);
+                }
+            });
+
+        var groups = photos
+            .GroupBy(x => GetSha256(x, cancellationToken))
+            .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() > 1)
+            .ToList();
 
         foreach (var group in groups)
         {
@@ -110,18 +167,26 @@ public sealed class DuplicateAnalysisService
                     "Duplicada por mesmo conteúdo (hash exato).");
             }
         }
+
+        reportProgress?.Invoke(hashTotal, hashTotal);
     }
 
     private void AddSameNameSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
         DuplicateAnalysisOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int, int>? reportProgress)
     {
         var groups = items
             .Where(x => x.IsImage)
             .GroupBy(x => $"{x.Name}|{x.Extension}", StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1);
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        var total = Math.Max(1, groups.Count);
+        var processed = 0;
+        reportProgress?.Invoke(0, total);
 
         foreach (var group in groups)
         {
@@ -147,19 +212,33 @@ public sealed class DuplicateAnalysisService
                     "Nome",
                     "Possível duplicada por mesmo nome e extensão.");
             }
+
+            processed++;
+            if (processed == total || processed % 32 == 0)
+            {
+                reportProgress?.Invoke(processed, total);
+            }
         }
+
+        reportProgress?.Invoke(total, total);
     }
 
     private void AddSameSizeSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
         DuplicateAnalysisOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int, int>? reportProgress)
     {
         var groups = items
             .Where(x => x.IsImage && x.SizeBytes > 0)
             .GroupBy(x => x.SizeBytes)
-            .Where(g => g.Count() > 1);
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        var total = Math.Max(1, groups.Count);
+        var processed = 0;
+        reportProgress?.Invoke(0, total);
 
         foreach (var group in groups)
         {
@@ -185,14 +264,23 @@ public sealed class DuplicateAnalysisService
                     "Tamanho",
                     "Possível duplicada por mesmo tamanho (revisar com atenção).");
             }
+
+            processed++;
+            if (processed == total || processed % 32 == 0)
+            {
+                reportProgress?.Invoke(processed, total);
+            }
         }
+
+        reportProgress?.Invoke(total, total);
     }
 
     private void AddSimilarSequenceSuggestions(
         IReadOnlyCollection<MediaItem> items,
         IDictionary<string, CandidateAccumulator> candidates,
         DuplicateAnalysisOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int, int>? reportProgress)
     {
         var photos = items
             .Where(x => x.IsImage && File.Exists(x.FullPath))
@@ -200,8 +288,34 @@ public sealed class DuplicateAnalysisService
             .ToList();
         if (photos.Count < 2)
         {
+            reportProgress?.Invoke(1, 1);
             return;
         }
+
+        // Pré-cálculo paralelo para aproveitar melhor CPU antes de comparar pares.
+        var hashProcessed = 0;
+        var hashTotal = photos.Count;
+        var estimatedPairCount = EstimatePairComparisons(photos, options.SimilarSecondsWindow);
+        var comparisonTotal = Math.Max(1, estimatedPairCount);
+        var totalUnits = hashTotal + comparisonTotal;
+        reportProgress?.Invoke(0, totalUnits);
+        Parallel.ForEach(
+            photos,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+            },
+            photo =>
+            {
+                _ = GetPerceptualHash(photo, cancellationToken);
+                var processed = Interlocked.Increment(ref hashProcessed);
+                if (processed == hashTotal || processed % 64 == 0)
+                {
+                    reportProgress?.Invoke(processed, totalUnits);
+                }
+            });
+        var comparedPairs = 0;
 
         var adjacency = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var minDistanceByItem = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -214,7 +328,7 @@ public sealed class DuplicateAnalysisService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var left = photos[i];
-            var leftHash = GetPerceptualHash(left);
+            var leftHash = GetPerceptualHash(left, cancellationToken);
             if (leftHash == 0)
             {
                 continue;
@@ -230,9 +344,14 @@ public sealed class DuplicateAnalysisService
                     break;
                 }
 
-                var rightHash = GetPerceptualHash(right);
+                var rightHash = GetPerceptualHash(right, cancellationToken);
                 if (rightHash == 0)
                 {
+                    comparedPairs++;
+                    if (comparedPairs == comparisonTotal || comparedPairs % 128 == 0)
+                    {
+                        reportProgress?.Invoke(hashTotal + Math.Min(comparedPairs, comparisonTotal), totalUnits);
+                    }
                     continue;
                 }
 
@@ -243,6 +362,12 @@ public sealed class DuplicateAnalysisService
                     adjacency[right.FullPath].Add(left.FullPath);
                     RegisterMinDistance(minDistanceByItem, left.FullPath, distance);
                     RegisterMinDistance(minDistanceByItem, right.FullPath, distance);
+                }
+
+                comparedPairs++;
+                if (comparedPairs == comparisonTotal || comparedPairs % 128 == 0)
+                {
+                    reportProgress?.Invoke(hashTotal + Math.Min(comparedPairs, comparisonTotal), totalUnits);
                 }
             }
         }
@@ -307,6 +432,8 @@ public sealed class DuplicateAnalysisService
                     GetMinDistance(minDistanceByItem, duplicate.FullPath));
             }
         }
+
+        reportProgress?.Invoke(totalUnits, totalUnits);
     }
 
     private static double ScoreForKeep(MediaItem item, DuplicateAnalysisOptions options)
@@ -386,7 +513,35 @@ public sealed class DuplicateAnalysisService
         return candidate;
     }
 
-    private string GetSha256(MediaItem item)
+    private static int EstimatePairComparisons(IReadOnlyList<MediaItem> photos, int windowSeconds)
+    {
+        if (photos.Count < 2)
+        {
+            return 0;
+        }
+
+        long totalPairs = 0;
+        var end = 0;
+        for (var i = 0; i < photos.Count; i++)
+        {
+            if (end < i + 1)
+            {
+                end = i + 1;
+            }
+
+            while (end < photos.Count &&
+                   (photos[end].PrimaryPhotoDate - photos[i].PrimaryPhotoDate).TotalSeconds <= windowSeconds)
+            {
+                end++;
+            }
+
+            totalPairs += end - i - 1;
+        }
+
+        return totalPairs > int.MaxValue ? int.MaxValue : (int)totalPairs;
+    }
+
+    private string GetSha256(MediaItem item, CancellationToken cancellationToken)
     {
         if (_sha256Cache.TryGetValue(item.FullPath, out var cached))
         {
@@ -396,11 +551,28 @@ public sealed class DuplicateAnalysisService
         try
         {
             using var stream = File.OpenRead(item.FullPath);
-            using var sha = SHA256.Create();
-            var hash = sha.ComputeHash(stream);
+            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[1024 * 128];
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var read = stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                sha.AppendData(buffer, 0, read);
+            }
+
+            var hash = sha.GetHashAndReset();
             var text = Convert.ToHexString(hash);
             _sha256Cache[item.FullPath] = text;
             return text;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -408,7 +580,7 @@ public sealed class DuplicateAnalysisService
         }
     }
 
-    private ulong GetPerceptualHash(MediaItem item)
+    private ulong GetPerceptualHash(MediaItem item, CancellationToken cancellationToken)
     {
         if (_dHashCache.TryGetValue(item.FullPath, out var cached))
         {
@@ -417,6 +589,7 @@ public sealed class DuplicateAnalysisService
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             using var fs = File.OpenRead(item.FullPath);
             var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad);
             var frame = decoder.Frames[0];
@@ -446,6 +619,10 @@ public sealed class DuplicateAnalysisService
 
             _dHashCache[item.FullPath] = hash;
             return hash;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

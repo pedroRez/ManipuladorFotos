@@ -1,3 +1,3 @@
 namespace ManipuladorFotos.Services;
 
-public readonly record struct ScanProgressInfo(int Processed, int Total);
+public readonly record struct ScanProgressInfo(string Stage, int Processed, int Total);

@@ -1,4 +1,6 @@
 ﻿using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows.Media.Imaging;
@@ -443,11 +445,20 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+            var scanStart = Stopwatch.StartNew();
             var progress = new Progress<ScanProgressInfo>(p =>
             {
-                var percent = p.Total > 0 ? (double)p.Processed / p.Total * 100d : 0d;
-                UpdateProgress(percent, false, $"Escaneando: {p.Processed}/{p.Total}");
-                StatusMessage = $"Escaneando arquivos... {p.Processed}/{p.Total}";
+                if (p.Total <= 0)
+                {
+                    UpdateProgress(OperationProgressPercent, true, $"{p.Stage}: {p.Processed}");
+                    StatusMessage = $"Escaneando arquivos... {p.Stage}: {p.Processed}";
+                    return;
+                }
+
+                var percent = (double)p.Processed / p.Total * 100d;
+                var etaLabel = BuildEtaLabel(percent, scanStart.Elapsed);
+                UpdateProgress(percent, false, $"{p.Stage}: {p.Processed}/{p.Total} | {etaLabel}");
+                StatusMessage = $"Escaneando arquivos... {p.Stage}: {p.Processed}/{p.Total} | {etaLabel}";
             });
 
             var scanned = await Task.Run(() => _scanner.Scan(CurrentFolder, IncludeSubfolders, cts.Token, progress), cts.Token);
@@ -488,11 +499,20 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+            var scanStart = Stopwatch.StartNew();
             var progress = new Progress<ScanProgressInfo>(p =>
             {
-                var percent = p.Total > 0 ? (double)p.Processed / p.Total * 100d : 0d;
-                UpdateProgress(percent, false, $"Busca indesejados: {p.Processed}/{p.Total}");
-                StatusMessage = $"Buscando arquivos indesejados... {p.Processed}/{p.Total}";
+                if (p.Total <= 0)
+                {
+                    UpdateProgress(OperationProgressPercent, true, $"{p.Stage}: {p.Processed}");
+                    StatusMessage = $"Buscando arquivos indesejados... {p.Stage}: {p.Processed}";
+                    return;
+                }
+
+                var percent = (double)p.Processed / p.Total * 100d;
+                var etaLabel = BuildEtaLabel(percent, scanStart.Elapsed);
+                UpdateProgress(percent, false, $"{p.Stage}: {p.Processed}/{p.Total} | {etaLabel}");
+                StatusMessage = $"Buscando arquivos indesejados... {p.Stage}: {p.Processed}/{p.Total} | {etaLabel}";
             });
 
             var unwanted = await Task.Run(() => _scanner.ScanUnwantedByExtensions(CurrentFolder, IncludeSubfolders, extensions, cts.Token, progress), cts.Token);
@@ -557,11 +577,15 @@ public sealed class MainViewModel : ObservableObject
                 KeepPreference = KeepPreference
             };
 
+            var analysisStart = Stopwatch.StartNew();
             var progress = new Progress<AnalysisProgressInfo>(p =>
             {
-                var percent = p.TotalSteps > 0 ? (double)p.CompletedSteps / p.TotalSteps * 100d : 0d;
-                UpdateProgress(percent, false, $"{p.Stage} ({p.CompletedSteps}/{p.TotalSteps})");
-                StatusMessage = $"Gerando lista de exclusão... {p.Stage}";
+                var stageRatio = p.StageTotal > 0 ? (double)p.StageProcessed / p.StageTotal : 1d;
+                var totalStages = Math.Max(1, p.TotalStages);
+                var percent = (((double)p.StageIndex - 1d) + Math.Clamp(stageRatio, 0d, 1d)) / totalStages * 100d;
+                var etaLabel = BuildEtaLabel(percent, analysisStart.Elapsed);
+                UpdateProgress(percent, false, $"Etapa {p.StageIndex}/{p.TotalStages}: {p.Stage} | {etaLabel}");
+                StatusMessage = $"Gerando lista de exclusão... {p.Stage} ({p.StageProcessed}/{p.StageTotal}) | {etaLabel}";
             });
 
             var candidates = await Task.Run(() => _duplicateAnalysisService.BuildDeletionCandidates(_allItems, options, cts.Token, progress), cts.Token);
@@ -612,12 +636,22 @@ public sealed class MainViewModel : ObservableObject
 
         var deleted = 0;
         var failed = 0;
-        var logLines = new List<string>();
+        var logLines = new ConcurrentBag<string>();
         var undoBatch = CreateUndoBatch($"Exclusão lista ({marked.Count} arquivos)");
-        var deletedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var deletedPathsMap = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var undoEntries = new ConcurrentBag<UndoEntry>();
 
         try
         {
+            var deleteStart = Stopwatch.StartNew();
+            IProgress<(int processed, int total)> progress = new Progress<(int processed, int total)>(p =>
+            {
+                var percent = p.total > 0 ? (double)p.processed / p.total * 100d : 0d;
+                var etaLabel = BuildEtaLabel(percent, deleteStart.Elapsed);
+                UpdateProgress(percent, false, $"Exclusão: {p.processed}/{p.total} | {etaLabel}");
+                StatusMessage = $"Excluindo arquivos... {p.processed}/{p.total} | {etaLabel}";
+            });
+
             await Task.Run(() =>
             {
                 var total = marked.Count;
@@ -628,44 +662,58 @@ public sealed class MainViewModel : ObservableObject
                     Directory.CreateDirectory(trashFolder);
                 }
 
-                foreach (var candidate in marked)
+                Parallel.ForEach(
+                    marked,
+                    new ParallelOptions
+                    {
+                        CancellationToken = cts.Token,
+                        MaxDegreeOfParallelism = Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2))
+                    },
+                    candidate =>
                 {
-                    cts.Token.ThrowIfCancellationRequested();
                     try
                     {
                         if (File.Exists(candidate.FullPath))
                         {
                             if (!IsDryRun)
                             {
-                                var trashPath = GetUniqueDestinationPath(trashFolder, Path.GetFileName(candidate.FullPath));
+                                var trashPath = BuildUniqueTrashPath(trashFolder, candidate.FullPath);
                                 File.Move(candidate.FullPath, trashPath);
-                                undoBatch.Entries.Add(new UndoEntry
+                                undoEntries.Add(new UndoEntry
                                 {
                                     OriginalPath = candidate.FullPath,
                                     CurrentPath = trashPath
                                 });
-                                deletedPaths.Add(candidate.FullPath);
+                                deletedPathsMap.TryAdd(candidate.FullPath, 0);
                             }
 
-                            deleted++;
+                            Interlocked.Increment(ref deleted);
                             logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_DELETE_CANDIDATE" : "DELETE_CANDIDATE")} | {candidate.FullPath}");
                         }
                     }
                     catch
                     {
-                        failed++;
+                        Interlocked.Increment(ref failed);
                     }
                     finally
                     {
-                        processed++;
-                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
-                        UpdateProgress(percent, false, $"Exclusão: {processed}/{total}");
+                        var done = Interlocked.Increment(ref processed);
+                        if (done % 20 == 0 || done == total)
+                        {
+                            progress.Report((done, total));
+                        }
                     }
-                }
+                });
             }, cts.Token);
 
             if (!IsDryRun)
             {
+                foreach (var entry in undoEntries)
+                {
+                    undoBatch.Entries.Add(entry);
+                }
+
+                var deletedPaths = deletedPathsMap.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
 
                 RemoveByPath(DisplayedItems, deletedPaths);
@@ -686,13 +734,17 @@ public sealed class MainViewModel : ObservableObject
             }
 
             UpdateMarkedDeletionSummary();
-            WriteOperationLog(logLines);
+            WriteOperationLog(logLines.ToList());
             StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")}. Processados: {deleted}. Falhas: {failed}.";
         }
         catch (OperationCanceledException)
         {
             if (!IsDryRun)
             {
+                foreach (var entry in undoEntries)
+                {
+                    undoBatch.Entries.Add(entry);
+                }
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
             StatusMessage = "Exclusão cancelada.";
@@ -843,12 +895,22 @@ public sealed class MainViewModel : ObservableObject
         var deleted = 0;
         var failed = 0;
         var total = marked.Count;
-        var logLines = new List<string>();
-        var deletedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var logLines = new ConcurrentBag<string>();
+        var deletedPathsMap = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var undoEntries = new ConcurrentBag<UndoEntry>();
         var undoBatch = CreateUndoBatch($"Exclusão indesejados ({marked.Count} arquivos)");
 
         try
         {
+            var deleteStart = Stopwatch.StartNew();
+            IProgress<(int processed, int total)> progress = new Progress<(int processed, int total)>(p =>
+            {
+                var percent = p.total > 0 ? (double)p.processed / p.total * 100d : 0d;
+                var etaLabel = BuildEtaLabel(percent, deleteStart.Elapsed);
+                UpdateProgress(percent, false, $"Indesejados: {p.processed}/{p.total} | {etaLabel}");
+                StatusMessage = $"Excluindo indesejados... {p.processed}/{p.total} | {etaLabel}";
+            });
+
             await Task.Run(() =>
             {
                 var processed = 0;
@@ -857,44 +919,58 @@ public sealed class MainViewModel : ObservableObject
                 {
                     Directory.CreateDirectory(trashFolder);
                 }
-                foreach (var item in marked)
+                Parallel.ForEach(
+                    marked,
+                    new ParallelOptions
+                    {
+                        CancellationToken = cts.Token,
+                        MaxDegreeOfParallelism = Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2))
+                    },
+                    item =>
                 {
-                    cts.Token.ThrowIfCancellationRequested();
                     try
                     {
                         if (File.Exists(item.FullPath))
                         {
                             if (!IsDryRun)
                             {
-                                var trashPath = GetUniqueDestinationPath(trashFolder, Path.GetFileName(item.FullPath));
+                                var trashPath = BuildUniqueTrashPath(trashFolder, item.FullPath);
                                 File.Move(item.FullPath, trashPath);
-                                undoBatch.Entries.Add(new UndoEntry
+                                undoEntries.Add(new UndoEntry
                                 {
                                     OriginalPath = item.FullPath,
                                     CurrentPath = trashPath
                                 });
-                                deletedPaths.Add(item.FullPath);
+                                deletedPathsMap.TryAdd(item.FullPath, 0);
                             }
 
-                            deleted++;
+                            Interlocked.Increment(ref deleted);
                             logLines.Add($"{DateTime.Now:HH:mm:ss} | {(IsDryRun ? "DRYRUN_DELETE_UNWANTED" : "DELETE_UNWANTED")} | {item.FullPath}");
                         }
                     }
                     catch
                     {
-                        failed++;
+                        Interlocked.Increment(ref failed);
                     }
                     finally
                     {
-                        processed++;
-                        var percent = total > 0 ? (double)processed / total * 100d : 0d;
-                        UpdateProgress(percent, false, $"Indesejados: {processed}/{total}");
+                        var done = Interlocked.Increment(ref processed);
+                        if (done % 20 == 0 || done == total)
+                        {
+                            progress.Report((done, total));
+                        }
                     }
-                }
+                });
             }, cts.Token);
 
             if (!IsDryRun)
             {
+                foreach (var entry in undoEntries)
+                {
+                    undoBatch.Entries.Add(entry);
+                }
+
+                var deletedPaths = deletedPathsMap.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
                 RemoveByPath(DisplayedItems, deletedPaths);
                 RemoveByPath(UnwantedItems, deletedPaths);
@@ -902,13 +978,17 @@ public sealed class MainViewModel : ObservableObject
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
 
-            WriteOperationLog(logLines);
+            WriteOperationLog(logLines.ToList());
             StatusMessage = $"{(IsDryRun ? "Dry Run concluído" : "Exclusão concluída")} em indesejados. Processados: {deleted}. Falhas: {failed}.";
         }
         catch (OperationCanceledException)
         {
             if (!IsDryRun)
             {
+                foreach (var entry in undoEntries)
+                {
+                    undoBatch.Entries.Add(entry);
+                }
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
             StatusMessage = "Operação de indesejados cancelada.";
@@ -1468,6 +1548,39 @@ public sealed class MainViewModel : ObservableObject
         OperationProgressLabel = label;
     }
 
+    private static string BuildEtaLabel(double percent, TimeSpan elapsed)
+    {
+        if (percent >= 99.9)
+        {
+            return $"Tempo decorrido: {FormatTimeSpan(elapsed)} | ETA: concluindo";
+        }
+
+        if (percent <= 1d || elapsed.TotalSeconds < 2)
+        {
+            return $"Tempo decorrido: {FormatTimeSpan(elapsed)} | ETA: calculando";
+        }
+
+        var progressFraction = percent / 100d;
+        var estimatedTotal = TimeSpan.FromTicks((long)(elapsed.Ticks / progressFraction));
+        var remaining = estimatedTotal - elapsed;
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        return $"Tempo decorrido: {FormatTimeSpan(elapsed)} | ETA: {FormatTimeSpan(remaining)}";
+    }
+
+    private static string FormatTimeSpan(TimeSpan value)
+    {
+        if (value.TotalHours >= 1)
+        {
+            return value.ToString(@"hh\:mm\:ss");
+        }
+
+        return value.ToString(@"mm\:ss");
+    }
+
     private static bool ConfirmDestructiveAction(string firstMessage, string title)
     {
         var confirm1 = System.Windows.MessageBox.Show(
@@ -1878,6 +1991,13 @@ public sealed class MainViewModel : ObservableObject
 
             index++;
         }
+    }
+
+    private static string BuildUniqueTrashPath(string folder, string sourcePath)
+    {
+        var name = Path.GetFileNameWithoutExtension(sourcePath);
+        var ext = Path.GetExtension(sourcePath);
+        return Path.Combine(folder, $"{name}_{Guid.NewGuid():N}{ext}");
     }
 
     private static string BuildDatePath(DateTime date, string mode)
