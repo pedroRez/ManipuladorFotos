@@ -419,6 +419,10 @@
                                                Foreground="#2E3A46"
                                                DockPanel.Dock="Left" />
                                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                        <Button Content="Desfazer Última"
+                                                Command="{Binding UndoLastOperationCommand}"
+                                                Background="#C4B5FD"
+                                                Foreground="#111827" />
                                         <Button Content="Marcar Todos"
                                                 Command="{Binding MarkAllDisplayedItemsCommand}" />
                                         <Button Content="Desmarcar Todos"

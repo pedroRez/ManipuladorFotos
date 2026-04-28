@@ -17,6 +17,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly FilterService _filterService = new();
     private readonly DuplicateAnalysisService _duplicateAnalysisService = new();
     private readonly UndoHistoryService _undoHistoryService = new();
+    private readonly ReviewRecoveryService _reviewRecoveryService = new();
 
     private readonly RelayCommand _scanFilesCommand;
     private readonly RelayCommand _scanUnwantedCommand;
@@ -98,6 +99,7 @@ public sealed class MainViewModel : ObservableObject
     private double _operationProgressPercent;
     private bool _isProgressIndeterminate;
     private string _operationProgressLabel = string.Empty;
+    private bool _isOperationCancellationRequested;
     private string _newMoveFolderPath = "Selecionadas";
     private string _cleanupMode = "Balanceado";
     private string _mediaOrganizationMode = "Separar Fotos e Vídeos";
@@ -136,6 +138,9 @@ public sealed class MainViewModel : ObservableObject
     private CancellationTokenSource? _selectedItemPreviewCts;
     private CancellationTokenSource? _deletionPreviewCts;
     private string _lastHeicCodecWarningPath = string.Empty;
+    private ReviewRecoverySnapshot? _pendingRecoverySnapshot;
+    private bool _isRestoringRecovery;
+    private CancellationTokenSource? _recoverySaveCts;
     private const int PreviewDecodePixelWidth = 1920;
     private const int PreviewDebounceMs = 120;
     private const int MaxFocusedGroupItems = 200;
@@ -261,6 +266,14 @@ public sealed class MainViewModel : ObservableObject
 
         _undoBatches = _undoHistoryService.Load();
         RefreshUndoSelection();
+
+        _pendingRecoverySnapshot = _reviewRecoveryService.Load();
+        if (_pendingRecoverySnapshot is not null && !string.IsNullOrWhiteSpace(_pendingRecoverySnapshot.Folder))
+        {
+            CurrentFolder = _pendingRecoverySnapshot.Folder;
+            IncludeSubfolders = _pendingRecoverySnapshot.IncludeSubfolders;
+            StatusMessage = $"Recuperação disponível de {(_pendingRecoverySnapshot.CreatedAt):dd/MM HH:mm}. Escaneando para restaurar revisão...";
+        }
 
         _ = ScanFilesAsync();
     }
@@ -532,6 +545,16 @@ public sealed class MainViewModel : ObservableObject
             if (value is not null && !ReferenceEquals(SelectedDeletionCandidate, value))
             {
                 SelectedDeletionCandidate = value;
+            }
+
+            if (value is not null && IsFocusedReviewMode && _focusedReviewItems.Count > 0)
+            {
+                var index = _focusedReviewItems.FindIndex(x => ReferenceEquals(x, value));
+                if (index >= 0 && index != _focusedReviewIndex)
+                {
+                    _focusedReviewIndex = index;
+                    OnPropertyChanged(nameof(FocusedReviewProgressLabel));
+                }
             }
 
             RaiseCommandStates();
@@ -1171,6 +1194,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         WorkflowStep = 5;
+        OpenWorkflowResultAutomatically();
     }
 
     private async Task ExecuteWorkflowOrganizationAsync()
@@ -1242,6 +1266,28 @@ public sealed class MainViewModel : ObservableObject
     private void OpenUnwantedTabFromWorkflow()
     {
         SelectedMainTabIndex = 1;
+    }
+
+    private void OpenWorkflowResultAutomatically()
+    {
+        if (IsWorkflowObjectiveCleanup && DeletionCandidates.Count > 0)
+        {
+            SelectedMainTabIndex = 2;
+            StartListReviewMode();
+            return;
+        }
+
+        if (IsWorkflowObjectiveUnwanted && UnwantedItems.Count > 0)
+        {
+            SelectedMainTabIndex = 1;
+            return;
+        }
+
+        if (IsWorkflowObjectiveOrganize && DisplayedItems.Count > 0)
+        {
+            SelectedMainTabIndex = 0;
+            OpenWorkflowFocusedVisualization();
+        }
     }
 
     private void ToggleOrganizeMode()
@@ -1372,6 +1418,7 @@ public sealed class MainViewModel : ObservableObject
             ClearDeletionCandidates();
             StatusMessage = $"{_allItems.Count} arquivos encontrados.";
             UpdateWorkflowScanSummary();
+            TryRestorePendingReviewAfterScan();
         }
         catch (OperationCanceledException)
         {
@@ -1486,6 +1533,29 @@ public sealed class MainViewModel : ObservableObject
                 KeepPreference = KeepPreference
             };
 
+            var needsImageMetadata = options.UseSimilarInSequenceRule ||
+                                     string.Equals(options.KeepPreference, "Maior resolução", StringComparison.OrdinalIgnoreCase);
+            if (needsImageMetadata)
+            {
+                var enrichStart = Stopwatch.StartNew();
+                var enrichProgress = new Progress<ScanProgressInfo>(p =>
+                {
+                    if (p.Total <= 0)
+                    {
+                        UpdateProgress(OperationProgressPercent, true, $"{p.Stage}: {p.Processed}");
+                        StatusMessage = $"Preparando análise... {p.Stage}: {p.Processed}";
+                        return;
+                    }
+
+                    var percent = Math.Clamp((double)p.Processed / p.Total, 0d, 1d) * 100d;
+                    var etaLabel = BuildEtaLabel(percent, enrichStart.Elapsed);
+                    UpdateProgress(percent, false, $"{p.Stage}: {p.Processed}/{p.Total} | {etaLabel}");
+                    StatusMessage = $"Preparando análise... {p.Stage}: {p.Processed}/{p.Total} | {etaLabel}";
+                });
+
+                await Task.Run(() => _scanner.EnrichImageMetadata(_allItems, cts.Token, enrichProgress), cts.Token);
+            }
+
             var currentStageIndex = -1;
             var currentStageStart = Stopwatch.StartNew();
             var progress = new Progress<AnalysisProgressInfo>(p =>
@@ -1516,6 +1586,7 @@ public sealed class MainViewModel : ObservableObject
             var protectedCount = DeletionCandidates.Count(x => !x.CanDelete);
             StatusMessage = $"Lista gerada: {DeletionCandidates.Count} itens ({protectedCount} originais protegidas).";
             OnPropertyChanged(nameof(CanOpenDeletionListFromWorkflow));
+            ScheduleReviewSnapshotSave();
             RaiseCommandStates();
         }
         catch (OperationCanceledException)
@@ -1569,8 +1640,11 @@ public sealed class MainViewModel : ObservableObject
             {
                 var percent = p.total > 0 ? (double)p.processed / p.total * 100d : 0d;
                 var etaLabel = BuildEtaLabel(percent, deleteStart.Elapsed);
-                UpdateProgress(percent, false, $"Exclusão: {p.processed}/{p.total} | {etaLabel}");
-                StatusMessage = $"Excluindo arquivos... {p.processed}/{p.total} | {etaLabel}";
+                var status = BuildOperationStatusLabel("Exclusão:", p.processed, p.total, etaLabel);
+                UpdateProgress(percent, false, status);
+                StatusMessage = _isOperationCancellationRequested
+                    ? $"Cancelando exclusão... finalizando {p.processed}/{p.total}"
+                    : $"Excluindo arquivos... {p.processed}/{p.total} | {etaLabel}";
             });
 
             await Task.Run(() =>
@@ -1588,7 +1662,7 @@ public sealed class MainViewModel : ObservableObject
                     new ParallelOptions
                     {
                         CancellationToken = cts.Token,
-                        MaxDegreeOfParallelism = Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2))
+                        MaxDegreeOfParallelism = Math.Min(3, Math.Max(1, Environment.ProcessorCount / 4))
                     },
                     candidate =>
                 {
@@ -1670,7 +1744,7 @@ public sealed class MainViewModel : ObservableObject
                 }
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
-            StatusMessage = "Exclusão cancelada.";
+            StatusMessage = BuildInterruptedOperationFallbackMessage("Exclusão", deleted, failed);
         }
         finally
         {
@@ -1790,7 +1864,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
-            StatusMessage = "Movimentação cancelada.";
+            StatusMessage = BuildInterruptedOperationFallbackMessage("Movimentação", moved, failed);
         }
         finally
         {
@@ -1835,8 +1909,11 @@ public sealed class MainViewModel : ObservableObject
             {
                 var percent = p.total > 0 ? (double)p.processed / p.total * 100d : 0d;
                 var etaLabel = BuildEtaLabel(percent, deleteStart.Elapsed);
-                UpdateProgress(percent, false, $"Indesejados: {p.processed}/{p.total} | {etaLabel}");
-                StatusMessage = $"Excluindo indesejados... {p.processed}/{p.total} | {etaLabel}";
+                var status = BuildOperationStatusLabel("Indesejados:", p.processed, p.total, etaLabel);
+                UpdateProgress(percent, false, status);
+                StatusMessage = _isOperationCancellationRequested
+                    ? $"Cancelando indesejados... finalizando {p.processed}/{p.total}"
+                    : $"Excluindo indesejados... {p.processed}/{p.total} | {etaLabel}";
             });
 
             await Task.Run(() =>
@@ -1852,7 +1929,7 @@ public sealed class MainViewModel : ObservableObject
                     new ParallelOptions
                     {
                         CancellationToken = cts.Token,
-                        MaxDegreeOfParallelism = Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2))
+                        MaxDegreeOfParallelism = Math.Min(3, Math.Max(1, Environment.ProcessorCount / 4))
                     },
                     item =>
                 {
@@ -1921,7 +1998,7 @@ public sealed class MainViewModel : ObservableObject
                 }
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
-            StatusMessage = "Operação de indesejados cancelada.";
+            StatusMessage = BuildInterruptedOperationFallbackMessage("Exclusão de indesejados", deleted, failed);
         }
         finally
         {
@@ -2110,7 +2187,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
-            StatusMessage = "Separação cancelada.";
+            StatusMessage = BuildInterruptedOperationFallbackMessage("Separação", moved, failed);
         }
         finally
         {
@@ -2234,7 +2311,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 RegisterUndoBatchIfNeeded(undoBatch);
             }
-            StatusMessage = "Organização por data cancelada.";
+            StatusMessage = BuildInterruptedOperationFallbackMessage("Organização por data", moved, failed);
         }
         finally
         {
@@ -2350,6 +2427,7 @@ public sealed class MainViewModel : ObservableObject
         _focusedReviewIndex = selectedIndex >= 0 ? selectedIndex : 0;
         IsFocusedReviewMode = true;
         SyncFocusedReviewSelection();
+        ScheduleReviewSnapshotSave();
         StatusMessage = "Modo revisão focada iniciado.";
     }
 
@@ -2369,6 +2447,7 @@ public sealed class MainViewModel : ObservableObject
         IsListReviewMode = true;
         RebuildListReviewItems();
         SelectedListReviewCandidate = ListReviewItems.FirstOrDefault();
+        ScheduleReviewSnapshotSave();
         StatusMessage = "Modo revisão em lista iniciado.";
     }
 
@@ -2390,6 +2469,7 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = "Modo revisão focada finalizado.";
         }
+        ScheduleReviewSnapshotSave();
         RaiseCommandStates();
     }
 
@@ -2408,6 +2488,7 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = "Modo revisão em lista finalizado.";
         }
+        ScheduleReviewSnapshotSave();
         RaiseCommandStates();
     }
 
@@ -2644,6 +2725,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         UpdateMarkedDeletionSummary();
+        ScheduleReviewSnapshotSave();
         RaiseCommandStates();
         return true;
     }
@@ -2782,6 +2864,7 @@ public sealed class MainViewModel : ObservableObject
             }
 
             UpdateMarkedDeletionSummary();
+            ScheduleReviewSnapshotSave();
             RaiseCommandStates();
         }
     }
@@ -2848,6 +2931,11 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             await Task.Delay(PreviewDebounceMs, cts.Token);
+            if (item?.IsImage == true && (!item.Width.HasValue || !item.Height.HasValue || !item.OriginalTakenTime.HasValue))
+            {
+                await Task.Run(() => _scanner.TryEnrichImageMetadata(item, cts.Token), cts.Token);
+            }
+
             var image = await Task.Run(() => LoadPreviewImage(item?.FullPath, item?.IsImage == true, cts.Token), cts.Token);
             if (!ReferenceEquals(_selectedItemPreviewCts, cts) || cts.IsCancellationRequested)
             {
@@ -2887,8 +2975,11 @@ public sealed class MainViewModel : ObservableObject
             {
                 var percent = p.total > 0 ? (double)p.processed / p.total * 100d : 0d;
                 var etaLabel = BuildEtaLabel(percent, deleteStart.Elapsed);
-                UpdateProgress(percent, false, $"Grupo: {p.processed}/{p.total} | {etaLabel}");
-                StatusMessage = $"Excluindo grupo... {p.processed}/{p.total} | {etaLabel}";
+                var status = BuildOperationStatusLabel("Grupo:", p.processed, p.total, etaLabel);
+                UpdateProgress(percent, false, status);
+                StatusMessage = _isOperationCancellationRequested
+                    ? $"Cancelando exclusão do grupo... finalizando {p.processed}/{p.total}"
+                    : $"Excluindo grupo... {p.processed}/{p.total} | {etaLabel}";
             });
 
             await Task.Run(() =>
@@ -2903,10 +2994,10 @@ public sealed class MainViewModel : ObservableObject
                     new ParallelOptions
                     {
                         CancellationToken = cts.Token,
-                        MaxDegreeOfParallelism = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 4))
+                        MaxDegreeOfParallelism = Math.Min(3, Math.Max(1, Environment.ProcessorCount / 4))
                     },
                     candidate =>
-                    {
+                {
                         try
                         {
                             if (!File.Exists(candidate.FullPath))
@@ -2976,7 +3067,7 @@ public sealed class MainViewModel : ObservableObject
             }
 
             RegisterUndoBatchIfNeeded(undoBatch);
-            StatusMessage = "Exclusão do grupo cancelada.";
+            StatusMessage = BuildInterruptedOperationFallbackMessage("Exclusão do grupo", deleted, failed);
         }
         finally
         {
@@ -2999,6 +3090,20 @@ public sealed class MainViewModel : ObservableObject
             var canLoadSelected = candidate?.Item.IsImage == true;
             var keepPath = candidate?.KeepFilePath;
             var canLoadKeep = candidate?.Item.IsImage == true && !string.IsNullOrWhiteSpace(keepPath);
+
+            if (candidate?.Item.IsImage == true && (!candidate.Item.Width.HasValue || !candidate.Item.Height.HasValue || !candidate.Item.OriginalTakenTime.HasValue))
+            {
+                await Task.Run(() => _scanner.TryEnrichImageMetadata(candidate.Item, cts.Token), cts.Token);
+            }
+
+            if (!string.IsNullOrWhiteSpace(keepPath))
+            {
+                var keepItem = _allItems.FirstOrDefault(x => x.FullPath.Equals(keepPath, StringComparison.OrdinalIgnoreCase));
+                if (keepItem is not null && keepItem.IsImage && (!keepItem.Width.HasValue || !keepItem.Height.HasValue || !keepItem.OriginalTakenTime.HasValue))
+                {
+                    await Task.Run(() => _scanner.TryEnrichImageMetadata(keepItem, cts.Token), cts.Token);
+                }
+            }
 
             var selectedTask = Task.Run(() => LoadPreviewImage(selectedPath, canLoadSelected, cts.Token), cts.Token);
             var keepTask = Task.Run(() => LoadPreviewImage(keepPath, canLoadKeep, cts.Token), cts.Token);
@@ -3104,6 +3209,7 @@ public sealed class MainViewModel : ObservableObject
         DeletionPreviewImage = null;
         KeepDeletionPreviewImage = null;
         UpdateMarkedDeletionSummary();
+        _reviewRecoveryService.Clear();
         RaiseCommandStates();
     }
 
@@ -3152,6 +3258,164 @@ public sealed class MainViewModel : ObservableObject
         }
 
         UpdateMarkedDeletionSummary();
+        ScheduleReviewSnapshotSave();
+    }
+
+    private void TryRestorePendingReviewAfterScan()
+    {
+        if (_pendingRecoverySnapshot is null || _isRestoringRecovery)
+        {
+            return;
+        }
+
+        if (!string.Equals(_pendingRecoverySnapshot.Folder, CurrentFolder, StringComparison.OrdinalIgnoreCase) ||
+            _pendingRecoverySnapshot.IncludeSubfolders != IncludeSubfolders)
+        {
+            return;
+        }
+
+        var snapshot = _pendingRecoverySnapshot;
+        _pendingRecoverySnapshot = null;
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Foi encontrada uma revisão salva de {snapshot.CreatedAt:dd/MM/yyyy HH:mm:ss}.\nDeseja restaurar agora?",
+            "Recuperar revisão anterior",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            _reviewRecoveryService.Clear();
+            return;
+        }
+
+        RestoreReviewSnapshot(snapshot);
+    }
+
+    private void RestoreReviewSnapshot(ReviewRecoverySnapshot snapshot)
+    {
+        _isRestoringRecovery = true;
+        try
+        {
+            ClearDeletionCandidates();
+            var byPath = _allItems.ToDictionary(x => x.FullPath, StringComparer.OrdinalIgnoreCase);
+            foreach (var saved in snapshot.Candidates)
+            {
+                if (!byPath.TryGetValue(saved.FullPath, out var item))
+                {
+                    continue;
+                }
+
+                var candidate = new DeletionCandidate
+                {
+                    Item = item,
+                    Reason = saved.Reason,
+                    Rule = saved.Rule,
+                    KeepFilePath = saved.KeepFilePath,
+                    GroupLabel = saved.GroupLabel,
+                    CanDelete = saved.CanDelete,
+                    SimilarityPercent = saved.SimilarityPercent,
+                    IsMarked = saved.IsMarked
+                };
+
+                candidate.PropertyChanged += CandidateOnPropertyChanged;
+                DeletionCandidates.Add(candidate);
+            }
+
+            if (DeletionCandidates.Count == 0)
+            {
+                _reviewRecoveryService.Clear();
+                StatusMessage = "Snapshot de revisão encontrado, mas nenhum item pôde ser restaurado.";
+                return;
+            }
+
+            var selected = !string.IsNullOrWhiteSpace(snapshot.SelectedCandidatePath)
+                ? DeletionCandidates.FirstOrDefault(x => x.FullPath.Equals(snapshot.SelectedCandidatePath, StringComparison.OrdinalIgnoreCase))
+                : null;
+            SelectedDeletionCandidate = selected ?? DeletionCandidates[0];
+
+            if (snapshot.IsListReviewMode)
+            {
+                StartListReviewMode();
+            }
+            else if (snapshot.IsFocusedReviewMode)
+            {
+                StartFocusedReviewMode();
+            }
+
+            UpdateMarkedDeletionSummary();
+            RaiseCommandStates();
+            StatusMessage = $"Revisão restaurada com {DeletionCandidates.Count} itens.";
+            ScheduleReviewSnapshotSave();
+        }
+        finally
+        {
+            _isRestoringRecovery = false;
+        }
+    }
+
+    private void ScheduleReviewSnapshotSave()
+    {
+        if (_isRestoringRecovery)
+        {
+            return;
+        }
+
+        _recoverySaveCts?.Cancel();
+        _recoverySaveCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _recoverySaveCts = cts;
+        _ = SaveReviewSnapshotDebouncedAsync(cts);
+    }
+
+    private async Task SaveReviewSnapshotDebouncedAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(1200, cts.Token);
+            if (!ReferenceEquals(_recoverySaveCts, cts) || cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            SaveOrClearReviewSnapshot();
+        }
+        catch (OperationCanceledException)
+        {
+            // ignora debounce cancelado
+        }
+    }
+
+    private void SaveOrClearReviewSnapshot()
+    {
+        if (_isRestoringRecovery || DeletionCandidates.Count == 0)
+        {
+            _reviewRecoveryService.Clear();
+            return;
+        }
+
+        var snapshot = new ReviewRecoverySnapshot
+        {
+            Folder = CurrentFolder,
+            IncludeSubfolders = IncludeSubfolders,
+            CreatedAt = DateTime.Now,
+            IsFocusedReviewMode = IsFocusedReviewMode,
+            IsListReviewMode = IsListReviewMode,
+            SelectedCandidatePath = SelectedDeletionCandidate?.FullPath,
+            Candidates = DeletionCandidates.Select(x => new ReviewRecoveryCandidate
+            {
+                FullPath = x.FullPath,
+                Reason = x.Reason,
+                Rule = x.Rule,
+                KeepFilePath = x.KeepFilePath,
+                GroupLabel = x.GroupLabel,
+                CanDelete = x.CanDelete,
+                IsMarked = x.IsMarked,
+                SimilarityPercent = x.SimilarityPercent
+            }).ToList()
+        };
+
+        _reviewRecoveryService.Save(snapshot);
     }
 
     private static void RemoveByPath(ObservableCollection<MediaItem> source, HashSet<string> deletedPaths)
@@ -3169,6 +3433,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _operationCts?.Dispose();
         _operationCts = new CancellationTokenSource();
+        _isOperationCancellationRequested = false;
         IsBusy = true;
         StatusMessage = startMessage;
         UpdateProgress(0, indeterminate, "Iniciando...");
@@ -3183,6 +3448,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         cts.Dispose();
+        _isOperationCancellationRequested = false;
         UpdateProgress(0, false, string.Empty);
         IsBusy = false;
         RaiseCommandStates();
@@ -3190,9 +3456,15 @@ public sealed class MainViewModel : ObservableObject
 
     private void CancelCurrentOperation()
     {
+        if (_operationCts is null || _isOperationCancellationRequested)
+        {
+            return;
+        }
+
+        _isOperationCancellationRequested = true;
         _operationCts?.Cancel();
-        StatusMessage = "Cancelando operação...";
-        UpdateProgress(OperationProgressPercent, true, "Cancelando...");
+        StatusMessage = "Cancelando operação... finalizando itens em andamento.";
+        UpdateProgress(OperationProgressPercent, true, "Cancelando... finalizando operações em andamento.");
     }
 
     private void UpdateProgress(double percent, bool indeterminate, string label)
@@ -3200,6 +3472,21 @@ public sealed class MainViewModel : ObservableObject
         OperationProgressPercent = Math.Clamp(percent, 0, 100);
         IsProgressIndeterminate = indeterminate;
         OperationProgressLabel = label;
+    }
+
+    private static string BuildInterruptedOperationFallbackMessage(string operationName, int processed, int failed)
+    {
+        return $"{operationName} interrompida. Processados até o momento: {processed}. Falhas: {failed}. Use 'Desfazer Última' para recuperar itens já movidos para área segura.";
+    }
+
+    private string BuildOperationStatusLabel(string runningLabel, int processed, int total, string etaLabel)
+    {
+        if (_isOperationCancellationRequested)
+        {
+            return $"Cancelando... finalizando {processed}/{total}";
+        }
+
+        return $"{runningLabel} {processed}/{total} | {etaLabel}";
     }
 
     private static string BuildEtaLabel(double percent, TimeSpan elapsed)

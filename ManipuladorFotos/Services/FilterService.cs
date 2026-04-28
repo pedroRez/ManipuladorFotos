@@ -36,13 +36,13 @@ public sealed class FilterService
 
         if (criteria.ModifiedFrom.HasValue)
         {
-            query = query.Where(x => x.PrimaryPhotoDate >= criteria.ModifiedFrom.Value.Date);
+            query = query.Where(x => x.LastWriteTime >= criteria.ModifiedFrom.Value.Date);
         }
 
         if (criteria.ModifiedTo.HasValue)
         {
             var date = criteria.ModifiedTo.Value.Date.AddDays(1).AddTicks(-1);
-            query = query.Where(x => x.PrimaryPhotoDate <= date);
+            query = query.Where(x => x.LastWriteTime <= date);
         }
 
         if (criteria.MinSizeBytes.HasValue)

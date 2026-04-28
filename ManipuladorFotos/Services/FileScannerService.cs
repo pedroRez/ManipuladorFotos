@@ -82,9 +82,6 @@ public sealed class FileScannerService
                         var info = new FileInfo(path);
                         var ext = info.Extension;
                         var kind = ResolveKind(ext);
-                        var (width, height, originalTakenTime) = kind == MediaKind.Foto
-                            ? TryReadImageMetadata(info.FullName)
-                            : ((int?)null, (int?)null, (DateTime?)null);
 
                         bag.Add(new MediaItem
                         {
@@ -94,10 +91,10 @@ public sealed class FileScannerService
                             SizeBytes = info.Length,
                             CreationTime = info.CreationTime,
                             LastWriteTime = info.LastWriteTime,
-                            OriginalTakenTime = originalTakenTime,
                             Kind = kind,
-                            Width = width,
-                            Height = height
+                            OriginalTakenTime = null,
+                            Width = null,
+                            Height = null
                         });
                     }
                 }
@@ -145,6 +142,69 @@ public sealed class FileScannerService
         return all.Where(x => normalized.Contains(x.Extension)).ToList();
     }
 
+    public int EnrichImageMetadata(
+        IReadOnlyCollection<MediaItem> items,
+        CancellationToken cancellationToken = default,
+        IProgress<ScanProgressInfo>? progress = null)
+    {
+        var photos = items
+            .Where(x => x.IsImage && File.Exists(x.FullPath))
+            .ToList();
+        if (photos.Count == 0)
+        {
+            progress?.Report(new ScanProgressInfo("Carregando metadados de fotos", 0, 0));
+            return 0;
+        }
+
+        var total = photos.Count;
+        var processed = 0;
+        var enriched = 0;
+        progress?.Report(new ScanProgressInfo("Carregando metadados de fotos", 0, total));
+
+        Parallel.ForEach(
+            photos,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+            },
+            item =>
+            {
+                if (TryEnrichImageMetadata(item, cancellationToken))
+                {
+                    Interlocked.Increment(ref enriched);
+                }
+
+                var done = Interlocked.Increment(ref processed);
+                if (done % 100 == 0 || done == total)
+                {
+                    progress?.Report(new ScanProgressInfo("Carregando metadados de fotos", done, total));
+                }
+            });
+
+        return enriched;
+    }
+
+    public bool TryEnrichImageMetadata(MediaItem? item, CancellationToken cancellationToken = default)
+    {
+        if (item is null || !item.IsImage || string.IsNullOrWhiteSpace(item.FullPath) || !File.Exists(item.FullPath))
+        {
+            return false;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var (width, height, originalTakenTime) = TryReadImageMetadata(item.FullPath, cancellationToken);
+        if (!width.HasValue && !height.HasValue && !originalTakenTime.HasValue)
+        {
+            return false;
+        }
+
+        item.Width = width;
+        item.Height = height;
+        item.OriginalTakenTime = originalTakenTime;
+        return true;
+    }
+
     private static string NormalizeExtension(string raw)
     {
         var trimmed = raw.Trim();
@@ -171,10 +231,11 @@ public sealed class FileScannerService
         return MediaKind.Outro;
     }
 
-    private static (int? Width, int? Height, DateTime? OriginalTakenTime) TryReadImageMetadata(string path)
+    private static (int? Width, int? Height, DateTime? OriginalTakenTime) TryReadImageMetadata(string path, CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             using var stream = File.OpenRead(path);
             var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
             var frame = decoder.Frames.FirstOrDefault();
@@ -185,6 +246,10 @@ public sealed class FileScannerService
 
             var originalTaken = TryReadOriginalTakenTime(frame.Metadata as BitmapMetadata);
             return (frame.PixelWidth, frame.PixelHeight, originalTaken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
