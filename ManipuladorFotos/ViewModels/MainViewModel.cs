@@ -41,6 +41,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _focusedReviewNextCommand;
     private readonly RelayCommand _focusedReviewKeepCommand;
     private readonly RelayCommand _focusedReviewDeleteCommand;
+    private readonly RelayCommand _focusedReviewSetOriginalCommand;
+    private readonly RelayCommand _focusedReviewDeleteGroupCommand;
+    private readonly RelayCommand _startListReviewCommand;
+    private readonly RelayCommand _exitListReviewCommand;
+    private readonly RelayCommand _listReviewSetOriginalCommand;
+    private readonly RelayCommand _listReviewDeleteGroupCommand;
     private readonly RelayCommand _showDeletionExplanationCommand;
     private readonly RelayCommand _undoLastOperationCommand;
     private readonly RelayCommand _undoSelectedOperationCommand;
@@ -55,6 +61,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly RelayCommand _workflowExecuteStepCommand;
     private readonly RelayCommand _workflowOpenFoundItemsCommand;
     private readonly RelayCommand _workflowCloseFoundItemsCommand;
+    private readonly RelayCommand _workflowFoundItemsNextStepCommand;
     private readonly RelayCommand _workflowRestartCommand;
     private readonly RelayCommand _workflowOpenDeletionTabCommand;
     private readonly RelayCommand _workflowOpenUnwantedTabCommand;
@@ -78,7 +85,7 @@ public sealed class MainViewModel : ObservableObject
     private BitmapImage? _deletionPreviewImage;
     private BitmapImage? _keepDeletionPreviewImage;
     private string _statusMessage = "Selecione uma pasta e clique em Escanear.";
-    private string _unwantedExtensions = ".tmp,.db,.ini,.log";
+    private string _unwantedExtensions = ".tmp,.db,.ini,.log,.bak,.old,.thm,.aae,.xmp,.lrv,.sfk,.pkf,.dop";
     private bool _useSameNameRule = true;
     private bool _useSameSizeRule = true;
     private bool _useSimilarInSequenceRule;
@@ -114,8 +121,12 @@ public sealed class MainViewModel : ObservableObject
     private string _workflowExecutionSummary = string.Empty;
     private bool _compareModeEnabled;
     private bool _isFocusedReviewMode;
+    private bool _isListReviewMode;
     private List<DeletionCandidate> _focusedReviewItems = [];
     private int _focusedReviewIndex = -1;
+    private DeletionCandidate? _selectedFocusedGroupItem;
+    private DeletionCandidate? _selectedListReviewCandidate;
+    private string _focusedGroupSummary = "Grupo: 0 itens";
     private List<UndoBatch> _undoBatches = [];
     private string? _selectedUndoBatchId;
     private string _lastScanFolder = string.Empty;
@@ -127,6 +138,7 @@ public sealed class MainViewModel : ObservableObject
     private string _lastHeicCodecWarningPath = string.Empty;
     private const int PreviewDecodePixelWidth = 1920;
     private const int PreviewDebounceMs = 120;
+    private const int MaxFocusedGroupItems = 200;
     private const string InternalFolderName = ".manipuladorfotos";
 
     public MainViewModel()
@@ -134,6 +146,8 @@ public sealed class MainViewModel : ObservableObject
         DisplayedItems = [];
         UnwantedItems = [];
         DeletionCandidates = [];
+        FocusedGroupItems = [];
+        ListReviewItems = [];
         TypeOptions = ["Todos", "Foto", "Video", "Outro"];
         KeepPreferenceOptions = ["Maior resolução", "Maior tamanho", "Mais recente", "Mais antiga"];
         DateOrganizationModes = ["Ano", "Ano/Mês", "Ano/Mês/Dia"];
@@ -168,6 +182,12 @@ public sealed class MainViewModel : ObservableObject
         _focusedReviewNextCommand = new RelayCommand(() => MoveFocusedReview(1), () => IsFocusedReviewMode && _focusedReviewItems.Count > 0);
         _focusedReviewKeepCommand = new RelayCommand(() => SetFocusedReviewMark(false), () => IsFocusedReviewMode && CurrentFocusedReviewCandidate is not null);
         _focusedReviewDeleteCommand = new RelayCommand(() => SetFocusedReviewMark(true), () => IsFocusedReviewMode && CurrentFocusedReviewCandidate is not null);
+        _focusedReviewSetOriginalCommand = new RelayCommand(SetFocusedReviewItemAsOriginal, () => IsFocusedReviewMode && SelectedFocusedGroupItem is not null);
+        _focusedReviewDeleteGroupCommand = new RelayCommand(() => _ = DeleteCurrentGroupAsync(), () => !IsBusy && IsFocusedReviewMode && CurrentFocusedReviewGroupAllItems.Count > 0);
+        _startListReviewCommand = new RelayCommand(StartListReviewMode, () => !IsBusy && DeletionCandidates.Count > 0);
+        _exitListReviewCommand = new RelayCommand(ExitListReviewMode, () => IsListReviewMode);
+        _listReviewSetOriginalCommand = new RelayCommand(SetListReviewItemAsOriginal, () => IsListReviewMode && SelectedListReviewCandidate is not null);
+        _listReviewDeleteGroupCommand = new RelayCommand(() => _ = DeleteSelectedListGroupAsync(), () => !IsBusy && IsListReviewMode && SelectedListReviewCandidate is not null);
         _showDeletionExplanationCommand = new RelayCommand(ShowDeletionExplanation);
         _undoLastOperationCommand = new RelayCommand(() => _ = UndoLastOperationAsync(), () => !IsBusy && _undoBatches.Count > 0);
         _undoSelectedOperationCommand = new RelayCommand(() => _ = UndoSelectedOperationAsync(), () => !IsBusy && !string.IsNullOrWhiteSpace(SelectedUndoBatchId));
@@ -182,6 +202,7 @@ public sealed class MainViewModel : ObservableObject
         _workflowExecuteStepCommand = new RelayCommand(() => _ = ExecuteWorkflowStepAsync(), () => !IsBusy && !IsWorkflowFocusedVisualization && WorkflowStep == 4);
         _workflowOpenFoundItemsCommand = new RelayCommand(OpenWorkflowFocusedVisualization, () => !IsBusy && WorkflowCanVisualizeFoundItems);
         _workflowCloseFoundItemsCommand = new RelayCommand(CloseWorkflowFocusedVisualization, () => !IsBusy && IsWorkflowFocusedVisualization);
+        _workflowFoundItemsNextStepCommand = new RelayCommand(() => _ = ProceedFromFocusedVisualizationAsync(), () => !IsBusy && IsWorkflowFocusedVisualization && WorkflowStep is 3 or 4);
         _workflowRestartCommand = new RelayCommand(RestartWorkflow, () => !IsBusy && WorkflowStep == 5);
         _workflowOpenDeletionTabCommand = new RelayCommand(OpenDeletionListTabFromWorkflow, () => !IsBusy && CanOpenDeletionListFromWorkflow);
         _workflowOpenUnwantedTabCommand = new RelayCommand(OpenUnwantedTabFromWorkflow, () => !IsBusy && CanOpenUnwantedFromWorkflow);
@@ -213,6 +234,12 @@ public sealed class MainViewModel : ObservableObject
         FocusedReviewNextCommand = _focusedReviewNextCommand;
         FocusedReviewKeepCommand = _focusedReviewKeepCommand;
         FocusedReviewDeleteCommand = _focusedReviewDeleteCommand;
+        FocusedReviewSetOriginalCommand = _focusedReviewSetOriginalCommand;
+        FocusedReviewDeleteGroupCommand = _focusedReviewDeleteGroupCommand;
+        StartListReviewCommand = _startListReviewCommand;
+        ExitListReviewCommand = _exitListReviewCommand;
+        ListReviewSetOriginalCommand = _listReviewSetOriginalCommand;
+        ListReviewDeleteGroupCommand = _listReviewDeleteGroupCommand;
         ShowDeletionExplanationCommand = _showDeletionExplanationCommand;
         UndoLastOperationCommand = _undoLastOperationCommand;
         UndoSelectedOperationCommand = _undoSelectedOperationCommand;
@@ -227,6 +254,7 @@ public sealed class MainViewModel : ObservableObject
         WorkflowExecuteStepCommand = _workflowExecuteStepCommand;
         WorkflowOpenFoundItemsCommand = _workflowOpenFoundItemsCommand;
         WorkflowCloseFoundItemsCommand = _workflowCloseFoundItemsCommand;
+        WorkflowFoundItemsNextStepCommand = _workflowFoundItemsNextStepCommand;
         WorkflowRestartCommand = _workflowRestartCommand;
         WorkflowOpenDeletionTabCommand = _workflowOpenDeletionTabCommand;
         WorkflowOpenUnwantedTabCommand = _workflowOpenUnwantedTabCommand;
@@ -240,6 +268,8 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<MediaItem> DisplayedItems { get; }
     public ObservableCollection<MediaItem> UnwantedItems { get; }
     public ObservableCollection<DeletionCandidate> DeletionCandidates { get; }
+    public ObservableCollection<DeletionCandidate> FocusedGroupItems { get; }
+    public ObservableCollection<DeletionCandidate> ListReviewItems { get; }
     public IReadOnlyList<string> TypeOptions { get; }
     public IReadOnlyList<string> KeepPreferenceOptions { get; }
     public IReadOnlyList<string> DateOrganizationModes { get; }
@@ -278,6 +308,12 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand FocusedReviewNextCommand { get; }
     public RelayCommand FocusedReviewKeepCommand { get; }
     public RelayCommand FocusedReviewDeleteCommand { get; }
+    public RelayCommand FocusedReviewSetOriginalCommand { get; }
+    public RelayCommand FocusedReviewDeleteGroupCommand { get; }
+    public RelayCommand StartListReviewCommand { get; }
+    public RelayCommand ExitListReviewCommand { get; }
+    public RelayCommand ListReviewSetOriginalCommand { get; }
+    public RelayCommand ListReviewDeleteGroupCommand { get; }
     public RelayCommand ShowDeletionExplanationCommand { get; }
     public RelayCommand UndoLastOperationCommand { get; }
     public RelayCommand UndoSelectedOperationCommand { get; }
@@ -292,6 +328,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand WorkflowExecuteStepCommand { get; }
     public RelayCommand WorkflowOpenFoundItemsCommand { get; }
     public RelayCommand WorkflowCloseFoundItemsCommand { get; }
+    public RelayCommand WorkflowFoundItemsNextStepCommand { get; }
     public RelayCommand WorkflowRestartCommand { get; }
     public RelayCommand WorkflowOpenDeletionTabCommand { get; }
     public RelayCommand WorkflowOpenUnwantedTabCommand { get; }
@@ -404,6 +441,12 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _selectedDeletionCandidate, value))
             {
                 _ = LoadDeletionPreviewAsync(value);
+                RefreshFocusedGroupContext();
+                if (IsListReviewMode && value is not null && !ReferenceEquals(_selectedListReviewCandidate, value))
+                {
+                    _selectedListReviewCandidate = value;
+                    OnPropertyChanged(nameof(SelectedListReviewCandidate));
+                }
             }
         }
     }
@@ -445,6 +488,18 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public bool IsListReviewMode
+    {
+        get => _isListReviewMode;
+        private set
+        {
+            if (SetProperty(ref _isListReviewMode, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
     public string FocusedReviewProgressLabel
     {
         get
@@ -458,10 +513,60 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public string FocusedGroupSummary
+    {
+        get => _focusedGroupSummary;
+        private set => SetProperty(ref _focusedGroupSummary, value);
+    }
+
+    public DeletionCandidate? SelectedFocusedGroupItem
+    {
+        get => _selectedFocusedGroupItem;
+        set
+        {
+            if (!SetProperty(ref _selectedFocusedGroupItem, value))
+            {
+                return;
+            }
+
+            if (value is not null && !ReferenceEquals(SelectedDeletionCandidate, value))
+            {
+                SelectedDeletionCandidate = value;
+            }
+
+            RaiseCommandStates();
+        }
+    }
+
+    public DeletionCandidate? SelectedListReviewCandidate
+    {
+        get => _selectedListReviewCandidate;
+        set
+        {
+            if (!SetProperty(ref _selectedListReviewCandidate, value))
+            {
+                return;
+            }
+
+            if (value is not null && !ReferenceEquals(SelectedDeletionCandidate, value))
+            {
+                SelectedDeletionCandidate = value;
+            }
+
+            RaiseCommandStates();
+        }
+    }
+
+    public string ListReviewSummary =>
+        $"Itens: {ListReviewItems.Count} | Grupos: {ListReviewItems.SelectMany(x => SplitGroups(x.GroupLabel)).Distinct(StringComparer.OrdinalIgnoreCase).Count()}";
+
     private DeletionCandidate? CurrentFocusedReviewCandidate =>
         _focusedReviewIndex >= 0 && _focusedReviewIndex < _focusedReviewItems.Count
             ? _focusedReviewItems[_focusedReviewIndex]
             : null;
+
+    private List<DeletionCandidate> CurrentFocusedReviewGroupAllItems =>
+        GetGroupCandidates(CurrentFocusedReviewCandidate ?? SelectedDeletionCandidate);
 
     public string? SelectedUndoBatchId
     {
@@ -808,8 +913,11 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(IsWorkflowStep5));
             OnPropertyChanged(nameof(WorkflowStepTitle));
             OnPropertyChanged(nameof(WorkflowStepHint));
+            OnPropertyChanged(nameof(IsWorkflowPreviousVisible));
             OnPropertyChanged(nameof(IsWorkflowNextVisible));
             OnPropertyChanged(nameof(IsWorkflowExecuteVisible));
+            OnPropertyChanged(nameof(IsWorkflowFoundItemsNextVisible));
+            OnPropertyChanged(nameof(WorkflowFoundItemsNextLabel));
             RaiseCommandStates();
         }
     }
@@ -829,6 +937,7 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(IsWorkflowObjectiveOrganize));
             OnPropertyChanged(nameof(WorkflowStepHint));
             OnPropertyChanged(nameof(WorkflowExecuteLabel));
+            OnPropertyChanged(nameof(WorkflowFoundItemsNextLabel));
             OnPropertyChanged(nameof(CanStartFocusedReviewFromWorkflow));
 
             if (IsWorkflowObjectiveUnwanted && DeletionApplyType != "Todos")
@@ -915,8 +1024,10 @@ public sealed class MainViewModel : ObservableObject
     public bool IsWorkflowStep4 => WorkflowStep == 4;
     public bool IsWorkflowStep5 => WorkflowStep == 5;
 
+    public bool IsWorkflowPreviousVisible => WorkflowStep > 1;
     public bool IsWorkflowNextVisible => WorkflowStep is 1 or 2 or 3;
     public bool IsWorkflowExecuteVisible => WorkflowStep == 4;
+    public bool IsWorkflowFoundItemsNextVisible => IsWorkflowFocusedVisualization && WorkflowStep is 3 or 4;
 
     public string WorkflowStepTitle => WorkflowStep switch
     {
@@ -983,6 +1094,10 @@ public sealed class MainViewModel : ObservableObject
         _ => "Executar organização"
     };
 
+    public string WorkflowFoundItemsNextLabel => WorkflowStep == 4
+        ? $"{WorkflowExecuteLabel} →"
+        : "Próximo passo →";
+
     public bool CanOpenDeletionListFromWorkflow => IsWorkflowObjectiveCleanup && DeletionCandidates.Count > 0;
     public bool CanOpenUnwantedFromWorkflow => IsWorkflowObjectiveUnwanted && UnwantedItems.Count > 0;
     public bool CanStartFocusedReviewFromWorkflow => IsWorkflowObjectiveCleanup && DeletionCandidates.Any(x => x.CanDelete);
@@ -1044,7 +1159,7 @@ public sealed class MainViewModel : ObservableObject
             await ScanUnwantedAsync();
             WorkflowExecutionSummary = UnwantedItems.Count == 0
                 ? "Nenhum arquivo indesejado encontrado com as extensões informadas."
-                : $"Foram encontrados {UnwantedItems.Count} arquivos indesejados.";
+                : $"Foram encontrados {UnwantedItems.Count} arquivos indesejados. Clique em 'Revisar indesejados' para marcar e excluir.";
         }
         else
         {
@@ -1096,6 +1211,27 @@ public sealed class MainViewModel : ObservableObject
     private void CloseWorkflowFocusedVisualization()
     {
         IsWorkflowFocusedVisualization = false;
+    }
+
+    private async Task ProceedFromFocusedVisualizationAsync()
+    {
+        if (!IsWorkflowFocusedVisualization)
+        {
+            return;
+        }
+
+        IsWorkflowFocusedVisualization = false;
+
+        if (WorkflowStep == 3)
+        {
+            WorkflowStep = 4;
+            return;
+        }
+
+        if (WorkflowStep == 4)
+        {
+            await ExecuteWorkflowStepAsync();
+        }
     }
 
     private void OpenDeletionListTabFromWorkflow()
@@ -2193,6 +2329,11 @@ public sealed class MainViewModel : ObservableObject
 
     private void StartFocusedReviewMode()
     {
+        if (IsListReviewMode)
+        {
+            ExitListReviewMode(silent: true);
+        }
+
         var candidates = DeletionCandidates
             .Where(x => x.CanDelete)
             .ToList();
@@ -2212,6 +2353,25 @@ public sealed class MainViewModel : ObservableObject
         StatusMessage = "Modo revisão focada iniciado.";
     }
 
+    private void StartListReviewMode()
+    {
+        if (IsFocusedReviewMode)
+        {
+            ExitFocusedReviewMode(silent: true);
+        }
+
+        if (DeletionCandidates.Count == 0)
+        {
+            StatusMessage = "Não há itens na lista de exclusão para revisão em lista.";
+            return;
+        }
+
+        IsListReviewMode = true;
+        RebuildListReviewItems();
+        SelectedListReviewCandidate = ListReviewItems.FirstOrDefault();
+        StatusMessage = "Modo revisão em lista iniciado.";
+    }
+
     private void ExitFocusedReviewMode()
     {
         ExitFocusedReviewMode(false);
@@ -2222,10 +2382,31 @@ public sealed class MainViewModel : ObservableObject
         IsFocusedReviewMode = false;
         _focusedReviewItems = [];
         _focusedReviewIndex = -1;
+        FocusedGroupItems.Clear();
+        SelectedFocusedGroupItem = null;
+        FocusedGroupSummary = "Grupo: 0 itens";
         OnPropertyChanged(nameof(FocusedReviewProgressLabel));
         if (!silent)
         {
             StatusMessage = "Modo revisão focada finalizado.";
+        }
+        RaiseCommandStates();
+    }
+
+    private void ExitListReviewMode()
+    {
+        ExitListReviewMode(false);
+    }
+
+    private void ExitListReviewMode(bool silent)
+    {
+        IsListReviewMode = false;
+        ListReviewItems.Clear();
+        SelectedListReviewCandidate = null;
+        OnPropertyChanged(nameof(ListReviewSummary));
+        if (!silent)
+        {
+            StatusMessage = "Modo revisão em lista finalizado.";
         }
         RaiseCommandStates();
     }
@@ -2281,6 +2462,190 @@ public sealed class MainViewModel : ObservableObject
 
         OnPropertyChanged(nameof(FocusedReviewProgressLabel));
         RaiseCommandStates();
+    }
+
+    private void RefreshFocusedGroupContext()
+    {
+        if (!IsFocusedReviewMode)
+        {
+            return;
+        }
+
+        var groupItems = CurrentFocusedReviewGroupAllItems
+            .OrderBy(x => x.CanDelete) // original protegida primeiro
+            .ThenByDescending(x => x.Item.PrimaryPhotoDate)
+            .ToList();
+
+        FocusedGroupItems.Clear();
+        foreach (var item in groupItems.Take(MaxFocusedGroupItems))
+        {
+            FocusedGroupItems.Add(item);
+        }
+
+        SelectedFocusedGroupItem = groupItems.Count == 0
+            ? null
+            : groupItems.FirstOrDefault(x => ReferenceEquals(x, SelectedDeletionCandidate)) ?? groupItems[0];
+
+        var truncated = groupItems.Count > MaxFocusedGroupItems
+            ? $" (mostrando {MaxFocusedGroupItems})"
+            : string.Empty;
+        FocusedGroupSummary = $"Grupo atual: {groupItems.Count} item(ns){truncated}";
+    }
+
+    private void RebuildListReviewItems()
+    {
+        ListReviewItems.Clear();
+        foreach (var item in DeletionCandidates
+                     .OrderBy(x => GetPrimaryGroupKey(x))
+                     .ThenBy(x => x.CanDelete)
+                     .ThenByDescending(x => x.Item.PrimaryPhotoDate)
+                     .ThenBy(x => x.Name))
+        {
+            ListReviewItems.Add(item);
+        }
+
+        OnPropertyChanged(nameof(ListReviewSummary));
+    }
+
+    private void SetFocusedReviewItemAsOriginal()
+    {
+        var candidate = SelectedFocusedGroupItem;
+        if (candidate is null)
+        {
+            return;
+        }
+
+        if (!TrySetOriginalForGroup(candidate))
+        {
+            return;
+        }
+
+        StatusMessage = "Original do grupo alterada na revisão focada.";
+        RefreshFocusedGroupContext();
+    }
+
+    private void SetListReviewItemAsOriginal()
+    {
+        var candidate = SelectedListReviewCandidate;
+        if (candidate is null)
+        {
+            return;
+        }
+
+        if (!TrySetOriginalForGroup(candidate))
+        {
+            return;
+        }
+
+        StatusMessage = "Original do grupo alterada na revisão em lista.";
+        RebuildListReviewItems();
+        SelectedListReviewCandidate = candidate;
+    }
+
+    private async Task DeleteCurrentGroupAsync()
+    {
+        var groupItems = CurrentFocusedReviewGroupAllItems;
+        if (groupItems.Count == 0)
+        {
+            StatusMessage = "Nenhum grupo disponível para exclusão.";
+            return;
+        }
+
+        await DeleteEntireGroupAsync(groupItems, "revisão focada");
+        RefreshFocusedGroupContext();
+    }
+
+    private async Task DeleteSelectedListGroupAsync()
+    {
+        var groupItems = GetGroupCandidates(SelectedListReviewCandidate);
+        if (groupItems.Count == 0)
+        {
+            StatusMessage = "Nenhum grupo disponível para exclusão.";
+            return;
+        }
+
+        await DeleteEntireGroupAsync(groupItems, "revisão em lista");
+        RebuildListReviewItems();
+        SelectedListReviewCandidate = ListReviewItems.FirstOrDefault();
+    }
+
+    private async Task DeleteEntireGroupAsync(IReadOnlyList<DeletionCandidate> groupItems, string sourceLabel)
+    {
+        var total = groupItems.Count;
+        var totalBytes = groupItems.Sum(x => x.Item.SizeBytes);
+        var confirm = System.Windows.MessageBox.Show(
+            $"Você vai excluir TODAS as {total} fotos deste grupo.\nEspaço estimado: {FormatBytes(totalBytes)}.\n\nAtenção: este conjunto inteiro será perdido.\nDeseja continuar?",
+            "Excluir grupo inteiro",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            StatusMessage = "Exclusão do grupo cancelada.";
+            return;
+        }
+
+        var confirmFinal = System.Windows.MessageBox.Show(
+            "Confirma novamente a exclusão de todas as fotos do grupo?",
+            "Excluir grupo inteiro - confirmação final",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (confirmFinal != System.Windows.MessageBoxResult.Yes)
+        {
+            StatusMessage = "Exclusão do grupo cancelada.";
+            return;
+        }
+
+        await DeleteCandidatesDirectAsync(groupItems, $"Exclusão de grupo ({sourceLabel})");
+    }
+
+    private List<DeletionCandidate> GetGroupCandidates(DeletionCandidate? anchor)
+    {
+        if (anchor is null)
+        {
+            return [];
+        }
+
+        var key = GetPrimaryGroupKey(anchor);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return [anchor];
+        }
+
+        return DeletionCandidates
+            .Where(x => SplitGroups(x.GroupLabel).Any(g => g.Equals(key, StringComparison.OrdinalIgnoreCase)))
+            .Distinct()
+            .ToList();
+    }
+
+    private static string GetPrimaryGroupKey(DeletionCandidate candidate)
+    {
+        return SplitGroups(candidate.GroupLabel).FirstOrDefault() ?? candidate.GroupLabel;
+    }
+
+    private bool TrySetOriginalForGroup(DeletionCandidate newOriginal)
+    {
+        var groupItems = GetGroupCandidates(newOriginal);
+        if (groupItems.Count <= 1)
+        {
+            StatusMessage = "Este item não possui grupo para troca de original.";
+            return false;
+        }
+
+        foreach (var item in groupItems)
+        {
+            item.KeepFilePath = newOriginal.FullPath;
+            item.CanDelete = !ReferenceEquals(item, newOriginal);
+            if (!item.CanDelete)
+            {
+                item.IsMarked = false;
+            }
+        }
+
+        UpdateMarkedDeletionSummary();
+        RaiseCommandStates();
+        return true;
     }
 
     private void SetAllDisplayedItemsMarked(bool marked)
@@ -2498,6 +2863,127 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private async Task DeleteCandidatesDirectAsync(IReadOnlyList<DeletionCandidate> targets, string operationLabel)
+    {
+        if (targets.Count == 0)
+        {
+            StatusMessage = "Nenhum arquivo para excluir.";
+            return;
+        }
+
+        var cts = BeginOperation("Movendo arquivos do grupo para área de exclusão segura...", false);
+        var deleted = 0;
+        var failed = 0;
+        string? firstErrorMessage = null;
+        var logLines = new ConcurrentBag<string>();
+        var undoBatch = CreateUndoBatch($"{operationLabel} ({targets.Count} arquivos)");
+        var deletedPathsMap = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var undoEntries = new ConcurrentBag<UndoEntry>();
+
+        try
+        {
+            var deleteStart = Stopwatch.StartNew();
+            IProgress<(int processed, int total)> progress = new Progress<(int processed, int total)>(p =>
+            {
+                var percent = p.total > 0 ? (double)p.processed / p.total * 100d : 0d;
+                var etaLabel = BuildEtaLabel(percent, deleteStart.Elapsed);
+                UpdateProgress(percent, false, $"Grupo: {p.processed}/{p.total} | {etaLabel}");
+                StatusMessage = $"Excluindo grupo... {p.processed}/{p.total} | {etaLabel}";
+            });
+
+            await Task.Run(() =>
+            {
+                var total = targets.Count;
+                var processed = 0;
+                var trashFolder = GetUndoTrashFolder(undoBatch.Id);
+                Directory.CreateDirectory(trashFolder);
+
+                Parallel.ForEach(
+                    targets,
+                    new ParallelOptions
+                    {
+                        CancellationToken = cts.Token,
+                        MaxDegreeOfParallelism = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 4))
+                    },
+                    candidate =>
+                    {
+                        try
+                        {
+                            if (!File.Exists(candidate.FullPath))
+                            {
+                                return;
+                            }
+
+                            var trashPath = BuildUniqueTrashPath(trashFolder, candidate.FullPath);
+                            File.Move(candidate.FullPath, trashPath);
+                            undoEntries.Add(new UndoEntry
+                            {
+                                OriginalPath = candidate.FullPath,
+                                CurrentPath = trashPath
+                            });
+                            deletedPathsMap.TryAdd(candidate.FullPath, 0);
+                            Interlocked.Increment(ref deleted);
+                            logLines.Add($"{DateTime.Now:HH:mm:ss} | DELETE_GROUP | {candidate.FullPath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Interlocked.Increment(ref failed);
+                            Interlocked.CompareExchange(ref firstErrorMessage, ex.Message, null);
+                        }
+                        finally
+                        {
+                            var done = Interlocked.Increment(ref processed);
+                            if (done % 10 == 0 || done == total)
+                            {
+                                progress.Report((done, total));
+                            }
+                        }
+                    });
+            }, cts.Token);
+
+            foreach (var entry in undoEntries)
+            {
+                undoBatch.Entries.Add(entry);
+            }
+
+            var deletedPaths = deletedPathsMap.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _allItems = _allItems.Where(x => !deletedPaths.Contains(x.FullPath)).ToList();
+            RemoveByPath(DisplayedItems, deletedPaths);
+            RemoveByPath(UnwantedItems, deletedPaths);
+            RemoveCandidatesByPath(deletedPaths);
+
+            if (SelectedItem is not null && deletedPaths.Contains(SelectedItem.FullPath))
+            {
+                SelectedItem = null;
+            }
+
+            if (SelectedDeletionCandidate is not null && deletedPaths.Contains(SelectedDeletionCandidate.FullPath))
+            {
+                SelectedDeletionCandidate = null;
+            }
+
+            RegisterUndoBatchIfNeeded(undoBatch);
+            UpdateMarkedDeletionSummary();
+            WriteOperationLog(logLines.ToList());
+            var errorSuffix = !string.IsNullOrWhiteSpace(firstErrorMessage) ? $" Primeiro erro: {firstErrorMessage}" : string.Empty;
+            StatusMessage = $"Exclusão do grupo concluída. Processados: {deleted}. Falhas: {failed}.{errorSuffix}";
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var entry in undoEntries)
+            {
+                undoBatch.Entries.Add(entry);
+            }
+
+            RegisterUndoBatchIfNeeded(undoBatch);
+            StatusMessage = "Exclusão do grupo cancelada.";
+        }
+        finally
+        {
+            EndOperation(cts);
+        }
+    }
+
     private async Task LoadDeletionPreviewAsync(DeletionCandidate? candidate)
     {
         CancelPreviewLoad(ref _deletionPreviewCts);
@@ -2606,6 +3092,7 @@ public sealed class MainViewModel : ObservableObject
     private void ClearDeletionCandidates()
     {
         ExitFocusedReviewMode(silent: true);
+        ExitListReviewMode(silent: true);
         CancelPreviewLoad(ref _deletionPreviewCts);
         foreach (var item in DeletionCandidates)
         {
@@ -2652,6 +3139,15 @@ public sealed class MainViewModel : ObservableObject
                 }
 
                 SyncFocusedReviewSelection();
+            }
+        }
+
+        if (IsListReviewMode)
+        {
+            RebuildListReviewItems();
+            if (SelectedListReviewCandidate is not null && deletedPaths.Contains(SelectedListReviewCandidate.FullPath))
+            {
+                SelectedListReviewCandidate = ListReviewItems.FirstOrDefault();
             }
         }
 
@@ -2807,6 +3303,12 @@ public sealed class MainViewModel : ObservableObject
         _focusedReviewNextCommand.RaiseCanExecuteChanged();
         _focusedReviewKeepCommand.RaiseCanExecuteChanged();
         _focusedReviewDeleteCommand.RaiseCanExecuteChanged();
+        _focusedReviewSetOriginalCommand.RaiseCanExecuteChanged();
+        _focusedReviewDeleteGroupCommand.RaiseCanExecuteChanged();
+        _startListReviewCommand.RaiseCanExecuteChanged();
+        _exitListReviewCommand.RaiseCanExecuteChanged();
+        _listReviewSetOriginalCommand.RaiseCanExecuteChanged();
+        _listReviewDeleteGroupCommand.RaiseCanExecuteChanged();
         _undoLastOperationCommand.RaiseCanExecuteChanged();
         _undoSelectedOperationCommand.RaiseCanExecuteChanged();
         _toggleOrganizeModeCommand.RaiseCanExecuteChanged();
@@ -2820,6 +3322,7 @@ public sealed class MainViewModel : ObservableObject
         _workflowExecuteStepCommand.RaiseCanExecuteChanged();
         _workflowOpenFoundItemsCommand.RaiseCanExecuteChanged();
         _workflowCloseFoundItemsCommand.RaiseCanExecuteChanged();
+        _workflowFoundItemsNextStepCommand.RaiseCanExecuteChanged();
         _workflowRestartCommand.RaiseCanExecuteChanged();
         _workflowOpenDeletionTabCommand.RaiseCanExecuteChanged();
         _workflowOpenUnwantedTabCommand.RaiseCanExecuteChanged();

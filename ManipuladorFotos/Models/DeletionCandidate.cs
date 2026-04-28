@@ -5,13 +5,31 @@ namespace ManipuladorFotos.Models;
 public sealed class DeletionCandidate : ObservableObject
 {
     private bool _isMarked;
+    private string _keepFilePath = string.Empty;
+    private bool _canDelete;
 
     public required MediaItem Item { get; init; }
     public required string Reason { get; init; }
     public required string Rule { get; init; }
-    public required string KeepFilePath { get; init; }
+    public required string KeepFilePath
+    {
+        get => _keepFilePath;
+        set => SetProperty(ref _keepFilePath, value);
+    }
     public required string GroupLabel { get; init; }
-    public required bool CanDelete { get; init; }
+    public required bool CanDelete
+    {
+        get => _canDelete;
+        set
+        {
+            if (!SetProperty(ref _canDelete, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(DeletionStateLabel));
+        }
+    }
     public int? SimilarityPercent { get; init; }
 
     public string Name => Item.Name;

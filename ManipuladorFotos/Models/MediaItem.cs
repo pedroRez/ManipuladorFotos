@@ -6,6 +6,9 @@ namespace ManipuladorFotos.Models;
 public sealed class MediaItem : ObservableObject
 {
     private bool _isMarked;
+    private DateTime? _originalTakenTime;
+    private int? _width;
+    private int? _height;
 
     public required string FullPath { get; init; }
     public required string Name { get; init; }
@@ -13,10 +16,22 @@ public sealed class MediaItem : ObservableObject
     public required long SizeBytes { get; init; }
     public required DateTime CreationTime { get; init; }
     public required DateTime LastWriteTime { get; init; }
-    public DateTime? OriginalTakenTime { get; init; }
+    public DateTime? OriginalTakenTime
+    {
+        get => _originalTakenTime;
+        set => SetProperty(ref _originalTakenTime, value);
+    }
     public required MediaKind Kind { get; init; }
-    public int? Width { get; init; }
-    public int? Height { get; init; }
+    public int? Width
+    {
+        get => _width;
+        set => SetProperty(ref _width, value);
+    }
+    public int? Height
+    {
+        get => _height;
+        set => SetProperty(ref _height, value);
+    }
 
     public string DirectoryPath => Path.GetDirectoryName(FullPath) ?? string.Empty;
 
